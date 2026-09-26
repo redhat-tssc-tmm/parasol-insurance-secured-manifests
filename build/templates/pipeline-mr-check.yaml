@@ -1,0 +1,124 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: parasol-insurance-mr-check
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: git-revision
+      type: string
+    - name: merge-request-iid
+      type: string
+    - name: commit-sha
+      type: string
+    - name: project-id
+      type: string
+  workspaces:
+    - name: source
+    - name: basic-auth
+    - name: dockerconfig
+    - name: maven-cache
+  tasks:
+    - name: clone-source
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      params:
+        - name: URL
+          value: "https://{{ .Values.gitlab.host }}/{{ .Values.tenant.username }}/parasol-insurance-secured.git"
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: SSL_VERIFY
+          value: "false"
+      workspaces:
+        - name: output
+          workspace: source
+        - name: basic-auth
+          workspace: basic-auth
+    - name: maven-build
+      runAfter:
+        - clone-source
+      taskRef:
+        name: maven-build
+      workspaces:
+        - name: source
+          workspace: source
+        - name: maven-cache
+          workspace: maven-cache
+    - name: build-and-push
+      runAfter:
+        - maven-build
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: namespace
+            value: openshift-pipelines
+      params:
+        - name: IMAGE
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
+        - name: DOCKERFILE
+          value: Containerfile
+        - name: TLSVERIFY
+          value: "false"
+        - name: STORAGE_DRIVER
+          value: vfs
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: roxctl-image-scan
+      runAfter:
+        - build-and-push
+      taskRef:
+        name: roxctl-image-scan
+      params:
+        - name: image
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
+    - name: roxctl-image-check
+      runAfter:
+        - roxctl-image-scan
+      taskRef:
+        name: roxctl-image-check
+      params:
+        - name: image
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
+  finally:
+    - name: report-to-gitlab
+      taskRef:
+        name: report-to-gitlab
+      params:
+        - name: project_id
+          value: $(params.project-id)
+        - name: commit_sha
+          value: $(params.commit-sha)
+        - name: merge_request_iid
+          value: $(params.merge-request-iid)
+        - name: build_status
+          value: $(tasks.build-and-push.status)
+        - name: scan_status
+          value: $(tasks.roxctl-image-scan.status)
+        - name: check_status
+          value: $(tasks.roxctl-image-check.status)
+        - name: scan_results
+          value: $(tasks.roxctl-image-scan.results.SCAN_RESULTS)
+        - name: scan_critical
+          value: $(tasks.roxctl-image-scan.results.CRITICAL_COUNT)
+        - name: scan_high
+          value: $(tasks.roxctl-image-scan.results.HIGH_COUNT)
+        - name: scan_medium
+          value: $(tasks.roxctl-image-scan.results.MEDIUM_COUNT)
+        - name: check_result
+          value: $(tasks.roxctl-image-check.results.CHECK_RESULT)
+        - name: check_summary
+          value: $(tasks.roxctl-image-check.results.VIOLATIONS_SUMMARY)

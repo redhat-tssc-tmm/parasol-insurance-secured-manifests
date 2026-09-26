@@ -1,0 +1,77 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ec-validate
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: image
+      type: string
+    - name: image_digest
+      type: string
+    - name: gitlab_host
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+    - name: policy_path
+      type: string
+      default: "policies/minimal-base-policy"
+  results:
+    - name: EC_RESULT
+      description: Enterprise Contract validation result (PASS or FAIL)
+    - name: EC_REPORT
+      description: Summary of EC validation
+  steps:
+    - name: validate
+      image: registry.redhat.io/openshift4/ose-cli-rhel9:latest
+      env:
+        - name: IMAGE
+          value: $(params.image)
+        - name: IMAGE_DIGEST
+          value: $(params.image_digest)
+        - name: GITLAB_HOST
+          value: $(params.gitlab_host)
+        - name: POLICY_PATH
+          value: $(params.policy_path)
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        echo "Downloading ec binary from TAS cli-server..."
+        curl -sL http://cli-server.trusted-artifact-signer.svc:8080/clients/linux/ec-amd64.gz \
+          | gunzip > /usr/local/bin/ec
+        chmod +x /usr/local/bin/ec
+
+        IMAGE_REF="${IMAGE}@${IMAGE_DIGEST}"
+        POLICY_URL="git::https://${GITLAB_HOST}/parasol/conforma-policies.git//${POLICY_PATH}?ref=main"
+
+        echo "Validating image: ${IMAGE_REF}"
+        echo "Policy: ${POLICY_URL}"
+
+        ec validate image \
+          --image "${IMAGE_REF}" \
+          --policy "${POLICY_URL}" \
+          --ignore-rekor \
+          --ssl-cert-dir /var/run/secrets/kubernetes.io/serviceaccount \
+          --output json > /tmp/ec-report.json 2>/tmp/ec-stderr.txt
+        EC_EXIT=$?
+
+        if [ ${EC_EXIT} -eq 0 ]; then
+          echo -n "PASS" > $(results.EC_RESULT.path)
+          echo -n "All policies passed" > $(results.EC_REPORT.path)
+          echo "EC validation PASSED"
+        else
+          echo -n "FAIL" > $(results.EC_RESULT.path)
+
+          if [ -s /tmp/ec-report.json ]; then
+            SUMMARY=$(jq -r '.components[]? | .violations[]? | .msg' /tmp/ec-report.json 2>/dev/null | head -5 | tr '\n' '; ')
+            [ -z "${SUMMARY}" ] && SUMMARY="Validation failed — see logs"
+          else
+            SUMMARY="Validation failed — see logs"
+            cat /tmp/ec-stderr.txt
+          fi
+
+          SUMMARY="${SUMMARY:0:4096}"
+          echo -n "${SUMMARY}" > $(results.EC_REPORT.path)
+          echo "EC validation FAILED: ${SUMMARY}"
+          exit 1
+        fi

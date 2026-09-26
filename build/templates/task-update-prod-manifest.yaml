@@ -1,0 +1,64 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: update-prod-manifest
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: IMAGE_DIGEST
+      type: string
+    - name: IMAGE_TAG
+      type: string
+    - name: GITLAB_HOST
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+  workspaces:
+    - name: source
+  volumes:
+    - name: gitlab-token
+      secret:
+        secretName: gitlab-credentials
+  steps:
+    - name: clone-update-pr
+      image: quay.io/agnosticd/ee-multicloud:latest
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      script: |
+        #!/bin/bash
+        set -e
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        GITLAB_HOST=$(params.GITLAB_HOST)
+        IMAGE_DIGEST=$(params.IMAGE_DIGEST)
+        IMAGE_TAG=$(params.IMAGE_TAG)
+        MANIFESTS_REPO="https://root:${GITLAB_TOKEN}@${GITLAB_HOST}/{{ .Values.tenant.username }}/parasol-insurance-secured-manifests.git"
+
+        git config --global user.email "tekton@parasol-insurance.local"
+        git config --global user.name "Tekton Pipeline"
+        export GIT_SSL_NO_VERIFY=true
+
+        git clone "$MANIFESTS_REPO" $(workspaces.source.path)/manifests
+        cd $(workspaces.source.path)/manifests
+
+        BRANCH="promote-${IMAGE_TAG}"
+        git checkout -b "${BRANCH}"
+
+        sed -i "s|digest:.*|digest: \"${IMAGE_DIGEST}\"|g" app/values/values-prod.yaml
+        sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|g" app/values/values-prod.yaml
+
+        if git diff --quiet; then
+          echo "Prod manifest already at digest ${IMAGE_DIGEST}, nothing to promote."
+          exit 0
+        fi
+
+        git add .
+        git commit -m "chore: promote ${IMAGE_TAG} (${IMAGE_DIGEST}) to prod"
+        git push origin "${BRANCH}"
+
+        curl -k --fail \
+          --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+          --data-urlencode "source_branch=${BRANCH}" \
+          --data-urlencode "target_branch=main" \
+          --data-urlencode "title=Promote ${IMAGE_TAG} to production (verified by EC)" \
+          "https://${GITLAB_HOST}/api/v4/projects/{{ .Values.tenant.username }}%2Fparasol-insurance-secured-manifests/merge_requests"

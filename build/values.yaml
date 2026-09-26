@@ -1,0 +1,24 @@
+namespace: parasol-insurance-secured-build
+preprodNamespace: parasol-insurance-preprod
+
+tenant:
+  username: parasol
+
+gitlab:
+  host: ""
+
+registry:
+  host: ""
+  organization: parasol
+
+image:
+  name: parasol-insurance-secured
+
+sonarqube:
+  host: ""
+  dashboardUrl: ""
+
+rhacs:
+  host: ""
+
+cluster_subdomain: ""

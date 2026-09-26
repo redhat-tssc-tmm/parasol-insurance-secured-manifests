@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: parasol-insurance
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: parasol-insurance
+    app.kubernetes.io/name: parasol-insurance-secured-{{ .Values.tenant.username }}
+    app.kubernetes.io/part-of: parasol-insurance-{{ .Values.environment }}
+spec:
+  to:
+    kind: Service
+    name: parasol-insurance
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,20 @@
+environment: preprod
+namespace: parasol-insurance-preprod
+
+image:
+  tag: latest
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 256m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+database:
+  user: parasol
+  password: parasol
+  name: parasol

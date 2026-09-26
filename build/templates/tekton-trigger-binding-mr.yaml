@@ -1,0 +1,15 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: parasol-insurance-mr-check-binding
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: git-revision
+      value: $(body.object_attributes.last_commit.id)
+    - name: merge-request-iid
+      value: $(body.object_attributes.iid)
+    - name: commit-sha
+      value: $(body.object_attributes.last_commit.id)
+    - name: project-id
+      value: $(body.project.id)

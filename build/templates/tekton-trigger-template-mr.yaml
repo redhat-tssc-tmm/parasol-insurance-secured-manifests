@@ -1,0 +1,49 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: parasol-insurance-mr-check-template
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: git-revision
+    - name: merge-request-iid
+    - name: commit-sha
+    - name: project-id
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: parasol-insurance-mr-check-
+        namespace: {{ .Values.namespace }}
+        labels:
+          app.kubernetes.io/name: parasol-insurance-secured-{{ .Values.tenant.username }}
+      spec:
+        pipelineRef:
+          name: parasol-insurance-mr-check
+        params:
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: merge-request-iid
+            value: $(tt.params.merge-request-iid)
+          - name: commit-sha
+            value: $(tt.params.commit-sha)
+          - name: project-id
+            value: $(tt.params.project-id)
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 2Gi
+          - name: basic-auth
+            secret:
+              secretName: gitlab-basic-auth
+          - name: dockerconfig
+            secret:
+              secretName: quay-push-secret
+          - name: maven-cache
+            persistentVolumeClaim:
+              claimName: maven-cache

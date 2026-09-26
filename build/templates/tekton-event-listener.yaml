@@ -1,0 +1,94 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: parasol-insurance-secured-listener
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceAccountName: parasol-insurance-secured-build
+  triggers:
+    - name: merge-request
+      interceptors:
+        - ref:
+            name: gitlab
+            kind: ClusterInterceptor
+          params:
+            - name: secretRef
+              value:
+                secretName: gitlab-webhook-secret
+                secretKey: token
+            - name: eventTypes
+              value:
+                - "Merge Request Hook"
+        - ref:
+            name: cel
+            kind: ClusterInterceptor
+          params:
+            - name: filter
+              value: "body.object_attributes.action in ['open', 'update', 'reopen']"
+      bindings:
+        - ref: parasol-insurance-mr-check-binding
+      template:
+        ref: parasol-insurance-mr-check-template
+    - name: push
+      interceptors:
+        - ref:
+            name: gitlab
+            kind: ClusterInterceptor
+          params:
+            - name: secretRef
+              value:
+                secretName: gitlab-webhook-secret
+                secretKey: token
+            - name: eventTypes
+              value:
+                - "Push Hook"
+        - ref:
+            name: cel
+            kind: ClusterInterceptor
+          params:
+            - name: filter
+              value: "body.ref == 'refs/heads/main' && body.after != '0000000000000000000000000000000000000000'"
+      bindings:
+        - ref: parasol-insurance-secured-push-binding
+      template:
+        ref: parasol-insurance-secured-push-template
+    - name: tag-push
+      interceptors:
+        - ref:
+            name: gitlab
+            kind: ClusterInterceptor
+          params:
+            - name: secretRef
+              value:
+                secretName: gitlab-webhook-secret
+                secretKey: token
+            - name: eventTypes
+              value:
+                - "Tag Push Hook"
+        - ref:
+            name: cel
+            kind: ClusterInterceptor
+          params:
+            - name: overlays
+              value:
+                - key: tag_name
+                  expression: "body.ref.split('/').last()"
+      bindings:
+        - ref: parasol-insurance-secured-tag-binding
+      template:
+        ref: parasol-insurance-secured-tag-template
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: parasol-insurance-secured-listener
+  namespace: {{ .Values.namespace }}
+spec:
+  port:
+    targetPort: http-listener
+  to:
+    kind: Service
+    name: el-parasol-insurance-secured-listener
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

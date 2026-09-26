@@ -1,0 +1,137 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: report-to-gitlab
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: gitlab_host
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+    - name: project_id
+      type: string
+    - name: commit_sha
+      type: string
+    - name: merge_request_iid
+      type: string
+    - name: build_status
+      type: string
+      default: "success"
+    - name: scan_status
+      type: string
+      default: "success"
+    - name: check_status
+      type: string
+      default: "success"
+    - name: scan_results
+      type: string
+      default: "No scan data"
+    - name: scan_critical
+      type: string
+      default: "0"
+    - name: scan_high
+      type: string
+      default: "0"
+    - name: scan_medium
+      type: string
+      default: "0"
+    - name: check_result
+      type: string
+      default: "N/A"
+    - name: check_summary
+      type: string
+      default: "No check data"
+  volumes:
+    - name: gitlab-token
+      secret:
+        secretName: gitlab-credentials
+  steps:
+    - name: set-commit-statuses
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        GITLAB_HOST="$(params.gitlab_host)"
+        PROJECT_ID="$(params.project_id)"
+        COMMIT_SHA="$(params.commit_sha)"
+        API_URL="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ID}/statuses/${COMMIT_SHA}"
+
+        set_status() {
+          local name="$1"
+          local state="$2"
+          local description="$3"
+
+          curl -sk --fail-with-body \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data-urlencode "state=${state}" \
+            --data-urlencode "name=${name}" \
+            --data-urlencode "description=${description}" \
+            "${API_URL}" > /dev/null
+
+          echo "Set status '${name}' to '${state}': ${description}"
+        }
+
+        set_status "build" "$(params.build_status)" "Build pipeline"
+        set_status "acs-image-scan" "$(params.scan_status)" "$(params.scan_results)"
+        set_status "acs-image-check" "$(params.check_status)" "$(params.check_result): $(params.check_summary)"
+
+    - name: post-mr-note
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        GITLAB_HOST="$(params.gitlab_host)"
+        PROJECT_ID="$(params.project_id)"
+        MR_IID="$(params.merge_request_iid)"
+        API_URL="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ID}/merge_requests/${MR_IID}/notes"
+
+        SCAN_STATUS="$(params.scan_status)"
+        CHECK_STATUS="$(params.check_status)"
+        SCAN_ICON="✅"
+        CHECK_ICON="✅"
+        [ "${SCAN_STATUS}" != "success" ] && SCAN_ICON="❌"
+        [ "${CHECK_STATUS}" != "success" ] && CHECK_ICON="❌"
+
+        NOTE_BODY=$(cat <<'NOTEEOF'
+        ## Security Pipeline Results
+
+        ### ACS Image Scan ${SCAN_ICON}
+        | Severity | Count |
+        |----------|-------|
+        | Critical | $(params.scan_critical) |
+        | High | $(params.scan_high) |
+        | Medium | $(params.scan_medium) |
+
+        ### ACS Policy Check ${CHECK_ICON}
+        **Result: $(params.check_result)**
+
+        $(params.check_summary)
+        NOTEEOF
+        )
+
+        NOTE_BODY=$(echo "${NOTE_BODY}" | sed \
+          -e "s|\${SCAN_ICON}|${SCAN_ICON}|g" \
+          -e "s|\${CHECK_ICON}|${CHECK_ICON}|g" \
+          -e 's|\$(params\.scan_critical)|'"$(params.scan_critical)"'|g' \
+          -e 's|\$(params\.scan_high)|'"$(params.scan_high)"'|g' \
+          -e 's|\$(params\.scan_medium)|'"$(params.scan_medium)"'|g' \
+          -e 's|\$(params\.check_result)|'"$(params.check_result)"'|g' \
+          -e 's|\$(params\.check_summary)|'"$(params.check_summary)"'|g' \
+        )
+
+        curl -sk --fail-with-body \
+          --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+          --data-urlencode "body=${NOTE_BODY}" \
+          "${API_URL}" > /dev/null
+
+        echo "Posted MR note to MR #${MR_IID}"

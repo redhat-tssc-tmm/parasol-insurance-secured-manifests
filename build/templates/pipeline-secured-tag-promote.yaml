@@ -1,0 +1,98 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: parasol-insurance-secured-tag-promote
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: git-tag
+      type: string
+    - name: git-revision
+      type: string
+  workspaces:
+    - name: source
+    - name: basic-auth
+    - name: dockerconfig
+  tasks:
+    - name: get-image-sha
+      taskSpec:
+        results:
+          - name: IMAGE_DIGEST
+            description: SHA256 digest of the latest image
+        steps:
+          - name: inspect
+            image: registry.redhat.io/rhel9/skopeo:latest
+            env:
+              - name: REGISTRY_AUTH_FILE
+                value: /workspace/dockerconfig/.dockerconfigjson
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              IMAGE="{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
+              echo "Inspecting image: ${IMAGE}"
+
+              DIGEST=$(skopeo inspect --tls-verify=false "docker://${IMAGE}" | jq -r '.Digest')
+              if [ -z "${DIGEST}" ] || [ "${DIGEST}" == "null" ]; then
+                echo "ERROR: Could not get digest for ${IMAGE}"
+                exit 1
+              fi
+
+              echo -n "${DIGEST}" > $(results.IMAGE_DIGEST.path)
+              echo "Image digest: ${DIGEST}"
+      workspaces:
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: ec-validate
+      runAfter:
+        - get-image-sha
+      taskRef:
+        name: ec-validate
+      params:
+        - name: image
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}"
+        - name: image_digest
+          value: $(tasks.get-image-sha.results.IMAGE_DIGEST)
+    - name: skopeo-copy
+      runAfter:
+        - ec-validate
+      taskSpec:
+        params:
+          - name: src-image
+            type: string
+          - name: dst-image
+            type: string
+        steps:
+          - name: copy
+            image: registry.redhat.io/rhel9/skopeo:latest
+            env:
+              - name: REGISTRY_AUTH_FILE
+                value: /workspace/dockerconfig/.dockerconfigjson
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              echo "Copying $(params.src-image) → $(params.dst-image)"
+              skopeo copy --all --tls-verify=false \
+                "docker://$(params.src-image)" \
+                "docker://$(params.dst-image)"
+              echo "Image tagged successfully"
+      params:
+        - name: src-image
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
+        - name: dst-image
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:$(params.git-tag)"
+      workspaces:
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: open-prod-pr
+      runAfter:
+        - skopeo-copy
+      taskRef:
+        name: update-prod-manifest
+      params:
+        - name: IMAGE_DIGEST
+          value: $(tasks.get-image-sha.results.IMAGE_DIGEST)
+        - name: IMAGE_TAG
+          value: $(params.git-tag)
+      workspaces:
+        - name: source
+          workspace: source
