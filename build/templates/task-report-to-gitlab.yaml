@@ -16,13 +16,13 @@ spec:
       type: string
     - name: build_status
       type: string
-      default: "success"
+      default: "Succeeded"
     - name: scan_status
       type: string
-      default: "success"
+      default: "Succeeded"
     - name: check_status
       type: string
-      default: "success"
+      default: "Succeeded"
     - name: scan_output
       type: string
       default: "{}"
@@ -30,162 +30,126 @@ spec:
     - name: gitlab-token
       secret:
         secretName: gitlab-credentials
+    - name: report-output
+      emptyDir: {}
   steps:
+    - name: prepare-report
+      image: registry.access.redhat.com/ubi9:latest
+      env:
+        - name: SCAN_OUTPUT
+          value: $(params.scan_output)
+        - name: BUILD_STATUS
+          value: $(params.build_status)
+        - name: SCAN_STATUS
+          value: $(params.scan_status)
+        - name: CHECK_STATUS
+          value: $(params.check_status)
+      volumeMounts:
+        - name: report-output
+          mountPath: /tmp/report
+      script: |
+        #!/usr/bin/env bash
+        python3 << 'PYEOF'
+        import json, os
+
+        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
+        build_status = os.environ.get("BUILD_STATUS", "")
+        scan_status = os.environ.get("SCAN_STATUS", "")
+        check_status = os.environ.get("CHECK_STATUS", "")
+
+        def map_state(s):
+            return "success" if s == "Succeeded" else "failed"
+
+        try:
+            data = json.loads(scan_output)
+            v = data.get("vulnerabilities", {})
+            uv = data.get("unpatched_vulnerabilities", {})
+        except:
+            v = {}
+            uv = {}
+
+        scan_desc = f"Critical: {v.get('critical',0)}, High: {v.get('high',0)}, Medium: {v.get('medium',0)}"
+        check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
+        scan_icon = "pass" if scan_status == "Succeeded" else "FAIL"
+        check_icon = "pass" if check_status == "Succeeded" else "FAIL"
+
+        # Write commit status data
+        statuses = [
+            {"name": "build", "state": map_state(build_status), "description": "Image build"},
+            {"name": "acs-image-scan", "state": map_state(scan_status), "description": scan_desc},
+            {"name": "acs-image-check", "state": map_state(check_status), "description": f"ACS policy check: {check_result}"},
+        ]
+        with open("/tmp/report/statuses.json", "w") as f:
+            json.dump(statuses, f)
+
+        # Write MR note body
+        lines = [
+            "## Security Pipeline Results",
+            "",
+            f"### ACS Image Scan ({scan_icon})",
+            "",
+            "Severity | Total | Unpatched",
+            "---------|-------|----------",
+            f"Critical | {v.get('critical', 0)} | {uv.get('critical', 0)}",
+            f"High | {v.get('high', 0)} | {uv.get('high', 0)}",
+            f"Medium | {v.get('medium', 0)} | {uv.get('medium', 0)}",
+            f"Low | {v.get('low', 0)} | {uv.get('low', 0)}",
+            "",
+            f"### ACS Policy Check ({check_icon})",
+            f"**Result: {check_result}**",
+        ]
+        with open("/tmp/report/note.md", "w") as f:
+            f.write("\n".join(lines))
+
+        print("Report prepared")
+        PYEOF
     - name: set-commit-statuses
       image: registry.access.redhat.com/ubi9:latest
       volumeMounts:
         - name: gitlab-token
           mountPath: /secrets/gitlab-token
+        - name: report-output
+          mountPath: /tmp/report
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
 
         GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
-        GITLAB_HOST="$(params.gitlab_host)"
-        PROJECT_ID="$(params.project_id)"
-        COMMIT_SHA="$(params.commit_sha)"
-        API_URL="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ID}/statuses/${COMMIT_SHA}"
+        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
 
-        # Parse scan output JSON for status descriptions
-        SCAN_OUTPUT='$(params.scan_output)'
-        SCAN_DESC=$(python3 -c "
-        import json
-        try:
-            data = json.loads('${SCAN_OUTPUT}'.replace(\"'\", \"\"))
-            v = data.get('vulnerabilities', {})
-            print(f\"Critical: {v.get('critical',0)}, High: {v.get('high',0)}, Medium: {v.get('medium',0)}\")
-        except:
-            print('Scan completed')
-        " 2>/dev/null || echo "Scan completed")
-
-        map_state() {
-          case "$1" in
-            Succeeded) echo "success" ;;
-            Failed)    echo "failed" ;;
-            *)         echo "failed" ;;
-          esac
-        }
-
-        set_status() {
-          local name="$1"
-          local state="$2"
-          local description="$3"
-
-          RESPONSE=$(curl -sk -w "\n%{http_code}" \
-            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-            --data-urlencode "state=${state}" \
-            --data-urlencode "name=${name}" \
-            --data-urlencode "description=${description}" \
-            "${API_URL}")
-
-          HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
-          echo "Set status '${name}' to '${state}': ${description} (HTTP ${HTTP_CODE})"
-        }
-
-        BUILD_STATE=$(map_state "$(params.build_status)")
-        SCAN_STATE=$(map_state "$(params.scan_status)")
-        CHECK_STATE=$(map_state "$(params.check_status)")
-
-        set_status "build" "${BUILD_STATE}" "Image build"
-        set_status "acs-image-scan" "${SCAN_STATE}" "${SCAN_DESC}"
-        set_status "acs-image-check" "${CHECK_STATE}" "ACS policy check"
-
+        python3 -c "
+        import json, subprocess, sys
+        statuses = json.load(open('/tmp/report/statuses.json'))
+        for s in statuses:
+            r = subprocess.run([
+                'curl', '-sk', '-w', '\n%{http_code}',
+                '--header', 'PRIVATE-TOKEN: ${GITLAB_TOKEN}',
+                '--data-urlencode', f'state={s[\"state\"]}',
+                '--data-urlencode', f'name={s[\"name\"]}',
+                '--data-urlencode', f'description={s[\"description\"]}',
+                '${API_URL}'
+            ], capture_output=True, text=True)
+            http_code = r.stdout.strip().split('\n')[-1] if r.stdout else 'error'
+            print(f'Set status \"{s[\"name\"]}\" to \"{s[\"state\"]}\": {s[\"description\"]} (HTTP {http_code})')
+        "
     - name: post-mr-note
-      image: registry.access.redhat.com/ubi9:latest
+      image: registry.access.redhat.com/ubi9-minimal:latest
       volumeMounts:
         - name: gitlab-token
           mountPath: /secrets/gitlab-token
+        - name: report-output
+          mountPath: /tmp/report
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
 
         GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
-        GITLAB_HOST="$(params.gitlab_host)"
-        PROJECT_ID="$(params.project_id)"
-        MR_IID="$(params.merge_request_iid)"
-        API_URL="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ID}/merge_requests/${MR_IID}/notes"
+        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/merge_requests/$(params.merge_request_iid)/notes"
+        NOTE_BODY=$(cat /tmp/report/note.md)
 
-        SCAN_STATUS="$(params.scan_status)"
-        CHECK_STATUS="$(params.check_status)"
-
-        SCAN_ICON="✅"
-        CHECK_ICON="✅"
-        [ "${SCAN_STATUS}" != "Succeeded" ] && SCAN_ICON="❌"
-        [ "${CHECK_STATUS}" != "Succeeded" ] && CHECK_ICON="❌"
-
-        SCAN_OUTPUT='$(params.scan_output)'
-        NOTE_BODY=$(python3 << 'PYEOF'
-        import json, os
-        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
-        scan_icon = os.environ.get("SCAN_ICON", "")
-        check_icon = os.environ.get("CHECK_ICON", "")
-        check_status = os.environ.get("CHECK_STATUS", "")
-
-        try:
-            data = json.loads(scan_output)
-            v = data.get("vulnerabilities", {})
-            uv = data.get("unpatched_vulnerabilities", {})
-        except:
-            v = {}
-            uv = {}
-
-        check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
-
-        note = f"""## Security Pipeline Results
-
-### ACS Image Scan {scan_icon}
-| Severity | Total | Unpatched |
-|----------|-------|-----------|
-| Critical | {v.get('critical', 0)} | {uv.get('critical', 0)} |
-| High | {v.get('high', 0)} | {uv.get('high', 0)} |
-| Medium | {v.get('medium', 0)} | {uv.get('medium', 0)} |
-| Low | {v.get('low', 0)} | {uv.get('low', 0)} |
-
-### ACS Policy Check {check_icon}
-**Result: {check_result}**
-"""
-        print(note)
-        PYEOF
-        )
-
-        export SCAN_OUTPUT CHECK_STATUS="${CHECK_STATUS}" SCAN_ICON CHECK_ICON
-        NOTE_BODY=$(SCAN_OUTPUT="${SCAN_OUTPUT}" SCAN_ICON="${SCAN_ICON}" CHECK_ICON="${CHECK_ICON}" CHECK_STATUS="${CHECK_STATUS}" python3 << 'PYEOF'
-        import json, os
-        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
-        scan_icon = os.environ.get("SCAN_ICON", "")
-        check_icon = os.environ.get("CHECK_ICON", "")
-        check_status = os.environ.get("CHECK_STATUS", "")
-
-        try:
-            data = json.loads(scan_output)
-            v = data.get("vulnerabilities", {})
-            uv = data.get("unpatched_vulnerabilities", {})
-        except:
-            v = {}
-            uv = {}
-
-        check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
-
-        note = f"""## Security Pipeline Results
-
-### ACS Image Scan {scan_icon}
-| Severity | Total | Unpatched |
-|----------|-------|-----------|
-| Critical | {v.get('critical', 0)} | {uv.get('critical', 0)} |
-| High | {v.get('high', 0)} | {uv.get('high', 0)} |
-| Medium | {v.get('medium', 0)} | {uv.get('medium', 0)} |
-| Low | {v.get('low', 0)} | {uv.get('low', 0)} |
-
-### ACS Policy Check {check_icon}
-**Result: {check_result}**
-"""
-        print(note)
-        PYEOF
-        )
-
-        curl -sk --fail-with-body \
+        curl -sk -w "\nHTTP %{http_code}" \
           --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
           --data-urlencode "body=${NOTE_BODY}" \
           "${API_URL}" > /dev/null
 
-        echo "Posted MR note to MR #${MR_IID}"
+        echo "Posted MR note to MR #$(params.merge_request_iid)"
