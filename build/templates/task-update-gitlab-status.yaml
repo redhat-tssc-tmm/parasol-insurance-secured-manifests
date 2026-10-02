@@ -1,0 +1,60 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: update-gitlab-status
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: gitlab_host
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+    - name: project_id
+      type: string
+    - name: commit_sha
+      type: string
+    - name: statuses
+      type: string
+      description: "JSON array of {name, state, description} objects"
+  volumes:
+    - name: gitlab-token
+      secret:
+        secretName: gitlab-credentials
+  steps:
+    - name: update
+      image: registry.access.redhat.com/ubi9:latest
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      env:
+        - name: STATUSES
+          value: $(params.statuses)
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
+
+        python3 -c "
+        import json, subprocess, os
+        statuses = json.loads(os.environ['STATUSES'])
+        token = open('/secrets/gitlab-token/token').read().strip()
+        api_url = '${API_URL}'
+        for s in statuses:
+            r = subprocess.run([
+                'curl', '-sk',
+                '--header', f'PRIVATE-TOKEN: {token}',
+                '--data-urlencode', f'state={s[\"state\"]}',
+                '--data-urlencode', f'name={s[\"name\"]}',
+                '--data-urlencode', f'description={s[\"description\"]}',
+                api_url
+            ], capture_output=True, text=True)
+            print(f'{s[\"name\"]}: {s[\"state\"]} — {s[\"description\"]}')
+        "

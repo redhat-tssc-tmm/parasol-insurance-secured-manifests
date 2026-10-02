@@ -90,9 +90,21 @@ spec:
           workspace: source
         - name: dockerconfig
           workspace: dockerconfig
-    - name: roxctl-image-scan
+    - name: update-build-complete
       runAfter:
         - build-and-push
+      taskRef:
+        name: update-gitlab-status
+      params:
+        - name: project_id
+          value: $(params.project-id)
+        - name: commit_sha
+          value: $(params.commit-sha)
+        - name: statuses
+          value: '[{"name":"build","state":"success","description":"Image built successfully"},{"name":"acs-image-scan","state":"running","description":"Scanning image for vulnerabilities..."},{"name":"acs-image-check","state":"running","description":"Checking image against policies..."}]'
+    - name: roxctl-image-scan
+      runAfter:
+        - update-build-complete
       taskRef:
         name: roxctl-image-scan
       params:
@@ -100,7 +112,7 @@ spec:
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
     - name: roxctl-image-check
       runAfter:
-        - build-and-push
+        - update-build-complete
       taskRef:
         name: roxctl-image-check
       params:
