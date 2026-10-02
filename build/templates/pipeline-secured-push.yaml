@@ -102,6 +102,9 @@ spec:
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
+      workspaces:
+        - name: source
+          workspace: source
     - name: roxctl-image-check
       runAfter:
         - build-and-push
@@ -110,6 +113,9 @@ spec:
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
+      workspaces:
+        - name: source
+          workspace: source
     - name: rollout-restart
       runAfter:
         - roxctl-image-scan

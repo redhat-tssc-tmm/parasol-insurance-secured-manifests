@@ -26,6 +26,12 @@ spec:
     - name: scan_output
       type: string
       default: "{}"
+    - name: target_url
+      type: string
+      default: ""
+  workspaces:
+    - name: source
+      optional: true
   volumes:
     - name: gitlab-token
       secret:
@@ -51,60 +57,185 @@ spec:
           value: $(params.scan_status)
         - name: CHECK_STATUS
           value: $(params.check_status)
+        - name: TARGET_URL
+          value: $(params.target_url)
+        - name: WORKSPACE_PATH
+          value: $(workspaces.source.path)
       volumeMounts:
         - name: report-output
           mountPath: /tmp/report
       script: |
         #!/usr/bin/env bash
         python3 << 'PYEOF'
-        import json, os
+        import json, os, sys
 
-        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
+        scan_output_str = os.environ.get("SCAN_OUTPUT", "{}")
         build_status = os.environ.get("BUILD_STATUS", "")
         scan_status = os.environ.get("SCAN_STATUS", "")
         check_status = os.environ.get("CHECK_STATUS", "")
+        target_url = os.environ.get("TARGET_URL", "")
+        ws_path = os.environ.get("WORKSPACE_PATH", "")
 
         def map_state(s):
             return "success" if s == "Succeeded" else "failed"
 
+        # Parse SCAN_OUTPUT for commit status descriptions
         try:
-            data = json.loads(scan_output)
-            v = data.get("vulnerabilities", {})
-            uv = data.get("unpatched_vulnerabilities", {})
-        except:
+            so = json.loads(scan_output_str)
+            v = so.get("vulnerabilities", {})
+        except Exception:
             v = {}
-            uv = {}
+        scan_desc = "Critical: {}, High: {}, Medium: {}".format(
+            v.get("critical", 0), v.get("high", 0), v.get("medium", 0))
 
-        scan_desc = f"Critical: {v.get('critical',0)}, High: {v.get('high',0)}, Medium: {v.get('medium',0)}"
         check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
-        scan_icon = "pass" if scan_status == "Succeeded" else "FAIL"
-        check_icon = "pass" if check_status == "Succeeded" else "FAIL"
 
-        # Write commit status data
+        # Commit statuses
         statuses = [
-            {"name": "build", "state": map_state(build_status), "description": "Image build"},
-            {"name": "acs-image-scan", "state": map_state(scan_status), "description": scan_desc},
-            {"name": "acs-image-check", "state": map_state(check_status), "description": f"ACS policy check: {check_result}"},
+            {"name": "build", "state": map_state(build_status),
+             "description": "Image build", "target_url": target_url},
+            {"name": "acs-image-scan", "state": map_state(scan_status),
+             "description": scan_desc, "target_url": target_url},
+            {"name": "acs-image-check", "state": map_state(check_status),
+             "description": "ACS policy check: " + check_result,
+             "target_url": target_url},
         ]
         with open("/tmp/report/statuses.json", "w") as f:
             json.dump(statuses, f)
 
-        # Write MR note body
-        lines = [
-            "## Security Pipeline Results",
-            "",
-            f"### ACS Image Scan ({scan_icon})",
-            "",
-            "Severity | Total | Unpatched",
-            "---------|-------|----------",
-            f"Critical | {v.get('critical', 0)} | {uv.get('critical', 0)}",
-            f"High | {v.get('high', 0)} | {uv.get('high', 0)}",
-            f"Medium | {v.get('medium', 0)} | {uv.get('medium', 0)}",
-            f"Low | {v.get('low', 0)} | {uv.get('low', 0)}",
-            "",
-            f"### ACS Policy Check ({check_icon})",
-            f"**Result: {check_result}**",
-        ]
+        # --- Build MR note ---
+        lines = []
+        lines.append("## Security Pipeline Results")
+        lines.append("")
+
+        # --- ACS Image Scan section (informational, no pass/fail) ---
+        lines.append("### ACS Image Scan")
+        lines.append("")
+
+        scan_json_path = os.path.join(ws_path, "acs-results", "image-scan.json") if ws_path else ""
+        scan_data = None
+        if scan_json_path and os.path.isfile(scan_json_path):
+            try:
+                with open(scan_json_path) as f:
+                    scan_data = json.load(f)
+            except Exception:
+                pass
+
+        if scan_data:
+            summary = scan_data.get("result", {}).get("summary", {})
+            vulns = scan_data.get("result", {}).get("vulnerabilities", [])
+
+            sev_order = {"CRITICAL": 0, "IMPORTANT": 1, "MODERATE": 2, "LOW": 3}
+            sev_label = {"CRITICAL": "Critical", "IMPORTANT": "Important",
+                         "MODERATE": "Moderate", "LOW": "Low"}
+
+            # Count fixable vs not
+            counts = {}
+            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
+                total = summary.get(sev_key, 0)
+                fixable = 0
+                unfixable = 0
+                for vv in vulns:
+                    if vv.get("cveSeverity") == sev_key:
+                        if vv.get("componentFixedVersion", ""):
+                            fixable += 1
+                        else:
+                            unfixable += 1
+                counts[sev_key] = {"total": total, "fixable": fixable,
+                                   "unfixable": unfixable}
+
+            lines.append("Severity | Total | With available fixes | Without fixes")
+            lines.append("---------|-------|---------------------|---------------")
+            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
+                c = counts.get(sev_key, {})
+                lines.append("{} | {} | {} | {}".format(
+                    sev_label[sev_key], c.get("total", 0),
+                    c.get("fixable", 0), c.get("unfixable", 0)))
+            lines.append("")
+
+            # Sort vulns by severity then CVE ID
+            sorted_vulns = sorted(vulns,
+                key=lambda x: (sev_order.get(x.get("cveSeverity", ""), 99),
+                               x.get("cveId", "")))
+
+            total_vulns = len(sorted_vulns)
+            lines.append("<details>")
+            lines.append("<summary>CVE Details ({} vulnerabilities)</summary>".format(
+                total_vulns))
+            lines.append("")
+            lines.append("CVE ID | Severity | Component | Version | Fixed in")
+            lines.append("-------|----------|-----------|---------|----------")
+            for vv in sorted_vulns:
+                cve = vv.get("cveId", "N/A")
+                sev = sev_label.get(vv.get("cveSeverity", ""), "Unknown")
+                comp = vv.get("componentName", "N/A")
+                ver = vv.get("componentVersion", "N/A")
+                fix = vv.get("componentFixedVersion", "")
+                if not fix:
+                    fix = "No fix available"
+                lines.append("{} | {} | {} | {} | {}".format(
+                    cve, sev, comp, ver, fix))
+            lines.append("")
+            lines.append("</details>")
+        else:
+            lines.append("Severity | Total | With available fixes | Without fixes")
+            lines.append("---------|-------|---------------------|---------------")
+            lines.append("Critical | {} | - | -".format(v.get("critical", 0)))
+            lines.append("High | {} | - | -".format(v.get("high", 0)))
+            lines.append("Medium | {} | - | -".format(v.get("medium", 0)))
+            lines.append("Low | {} | - | -".format(v.get("low", 0)))
+
+        lines.append("")
+
+        # --- ACS Policy Check section ---
+        check_icon = "✅" if check_status == "Succeeded" else "❌"
+        lines.append("### {} ACS Policy Check".format(check_icon))
+        lines.append("")
+
+        check_json_path = os.path.join(ws_path, "acs-results",
+                                       "image-check.json") if ws_path else ""
+        check_data = None
+        if check_json_path and os.path.isfile(check_json_path):
+            try:
+                with open(check_json_path) as f:
+                    check_data = json.load(f)
+            except Exception:
+                pass
+
+        if check_data:
+            results = check_data.get("results", [])
+            if results:
+                policies = results[0].get("violatedPolicies", [])
+                total_policies = len(policies)
+                breaking = [p for p in policies if p.get("failingCheck", False)]
+                non_breaking = [p for p in policies
+                                if not p.get("failingCheck", False)]
+
+                lines.append("{} policies evaluated, {} with violations that block merge".format(
+                    total_policies, len(breaking)))
+                lines.append("")
+
+                lines.append("<details>")
+                lines.append("<summary>Policy Details ({} policies)</summary>".format(
+                    total_policies))
+                lines.append("")
+                lines.append("Policy | Severity | Blocks Merge | Status")
+                lines.append("-------|----------|-------------|-------")
+                for p in policies:
+                    name = p.get("name", "Unknown")
+                    severity = p.get("severity", "Unknown")
+                    blocks = "Yes" if p.get("failingCheck", False) else "No"
+                    status = "❌ Violation" if p.get("failingCheck", False) \
+                             else "⚠️ Warning"
+                    lines.append("{} | {} | {} | {}".format(
+                        name, severity, blocks, status))
+                lines.append("")
+                lines.append("</details>")
+            else:
+                lines.append("No policy violations found.")
+        else:
+            lines.append("**Result: {}**".format(check_result))
+
         with open("/tmp/report/note.md", "w") as f:
             f.write("\n".join(lines))
 
@@ -119,6 +250,11 @@ spec:
         limits:
           cpu: 200m
           memory: 256Mi
+      env:
+        - name: GITLAB_TOKEN_PATH
+          value: /secrets/gitlab-token/token
+        - name: API_URL
+          value: "https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
       volumeMounts:
         - name: gitlab-token
           mountPath: /secrets/gitlab-token
@@ -128,24 +264,30 @@ spec:
         #!/usr/bin/env bash
         set -uo pipefail
 
-        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
-        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
+        python3 << 'PYEOF'
+        import json, subprocess, os
 
-        python3 -c "
-        import json, subprocess, sys
-        statuses = json.load(open('/tmp/report/statuses.json'))
+        token = open(os.environ["GITLAB_TOKEN_PATH"]).read().strip()
+        api_url = os.environ["API_URL"]
+        statuses = json.load(open("/tmp/report/statuses.json"))
+
         for s in statuses:
-            r = subprocess.run([
-                'curl', '-sk', '-w', '\n%{http_code}',
-                '--header', 'PRIVATE-TOKEN: ${GITLAB_TOKEN}',
-                '--data-urlencode', f'state={s[\"state\"]}',
-                '--data-urlencode', f'name={s[\"name\"]}',
-                '--data-urlencode', f'description={s[\"description\"]}',
-                '${API_URL}'
-            ], capture_output=True, text=True)
-            http_code = r.stdout.strip().split('\n')[-1] if r.stdout else 'error'
-            print(f'Set status \"{s[\"name\"]}\" to \"{s[\"state\"]}\": {s[\"description\"]} (HTTP {http_code})')
-        "
+            cmd = [
+                "curl", "-sk", "-w", "\n%{http_code}",
+                "--header", "PRIVATE-TOKEN: " + token,
+                "--data-urlencode", "state=" + s["state"],
+                "--data-urlencode", "name=" + s["name"],
+                "--data-urlencode", "description=" + s["description"],
+            ]
+            if s.get("target_url"):
+                cmd += ["--data-urlencode", "target_url=" + s["target_url"]]
+            cmd.append(api_url)
+
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            http_code = r.stdout.strip().split("\n")[-1] if r.stdout else "error"
+            print("{}: {} - {} (HTTP {})".format(
+                s["name"], s["state"], s["description"], http_code))
+        PYEOF
     - name: post-mr-note
       image: registry.access.redhat.com/ubi9-minimal:latest
       resources:

@@ -110,6 +110,9 @@ spec:
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
+      workspaces:
+        - name: source
+          workspace: source
     - name: roxctl-image-check
       runAfter:
         - update-build-complete
@@ -118,10 +121,16 @@ spec:
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
+      workspaces:
+        - name: source
+          workspace: source
   finally:
     - name: report-to-gitlab
       taskRef:
         name: report-to-gitlab
+      workspaces:
+        - name: source
+          workspace: source
       params:
         - name: project_id
           value: $(params.project-id)
