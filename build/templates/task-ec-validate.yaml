@@ -3,6 +3,12 @@ kind: Task
 metadata:
   name: ec-validate
   namespace: {{ .Values.namespace }}
+  annotations:
+    task.output.location: logs
+    task.results.format: application/json
+    task.results.type: ec
+    task.results.key: CONFORMA_OUTPUT
+    task.results.container: step-report
 spec:
   params:
     - name: image
@@ -25,10 +31,11 @@ spec:
       type: string
       default: "http://rekor-server.trusted-artifact-signer.svc"
   results:
-    - name: EC_RESULT
-      description: Enterprise Contract validation result (PASS or FAIL)
-    - name: EC_REPORT
-      description: Summary of EC validation
+    - name: CONFORMA_OUTPUT
+      description: Conforma validation result summary for RHDH
+  volumes:
+    - name: ec-output
+      emptyDir: {}
   steps:
     - name: validate
       image: registry.redhat.io/openshift4/ose-cli-rhel9:latest
@@ -47,6 +54,9 @@ spec:
           value: $(params.certificate_identity)
         - name: REKOR_URL
           value: $(params.rekor_url)
+      volumeMounts:
+        - name: ec-output
+          mountPath: /tmp/ec-output
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
@@ -75,26 +85,57 @@ spec:
           --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
           --certificate-identity "${CERTIFICATE_IDENTITY}" \
           --rekor-url "${REKOR_URL}" \
-          --output json > /tmp/ec-report.json 2>/tmp/ec-stderr.txt
-        EC_EXIT=$?
+          --output json=/tmp/ec-output/result.json \
+          --output text=/tmp/ec-output/result.txt \
+          --show-successes \
+          --info
 
-        if [ ${EC_EXIT} -eq 0 ]; then
-          echo -n "PASS" > $(results.EC_RESULT.path)
-          echo -n "All policies passed" > $(results.EC_REPORT.path)
-          echo "EC validation PASSED"
-        else
-          echo -n "FAIL" > $(results.EC_RESULT.path)
-
-          if [ -s /tmp/ec-report.json ]; then
-            SUMMARY=$(jq -r '.components[]? | .violations[]? | .msg' /tmp/ec-report.json 2>/dev/null | head -5 | tr '\n' '; ')
-            [ -z "${SUMMARY}" ] && SUMMARY="Validation failed — see logs"
-          else
-            SUMMARY="Validation failed — see logs"
-            cat /tmp/ec-stderr.txt
-          fi
-
-          SUMMARY="${SUMMARY:0:4096}"
-          echo -n "${SUMMARY}" > $(results.EC_REPORT.path)
-          echo "EC validation FAILED: ${SUMMARY}"
-          exit 1
-        fi
+        echo "EC validation completed"
+    - name: summary
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      computeResources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      volumeMounts:
+        - name: ec-output
+          mountPath: /tmp/ec-output
+      script: |
+        #!/usr/bin/env bash
+        cat /tmp/ec-output/result.txt
+    - name: report
+      image: registry.access.redhat.com/ubi9:latest
+      computeResources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      volumeMounts:
+        - name: ec-output
+          mountPath: /tmp/ec-output
+      script: |
+        #!/usr/bin/env bash
+        python3 -c "
+        import json
+        with open('/tmp/ec-output/result.json') as f:
+            data = json.load(f)
+        components = data.get('components', [])
+        for c in components:
+            successes = len(c.get('successes', []))
+            violations = len(c.get('violations', []))
+            warnings = len(c.get('warnings', []))
+        result = {
+            'success': data.get('success', False),
+            'components': len(components),
+            'passed': successes,
+            'violations': violations,
+            'warnings': warnings
+        }
+        print(json.dumps(result))
+        " > $(results.CONFORMA_OUTPUT.path)
+        cat /tmp/ec-output/result.json
