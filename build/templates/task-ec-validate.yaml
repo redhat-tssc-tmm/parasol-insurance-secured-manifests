@@ -51,7 +51,6 @@ spec:
           --image "${IMAGE_REF}" \
           --policy "${POLICY_URL}" \
           --ignore-rekor \
-          --ssl-cert-dir /var/run/secrets/kubernetes.io/serviceaccount \
           --output json > /tmp/ec-report.json 2>/tmp/ec-stderr.txt
         EC_EXIT=$?
 
