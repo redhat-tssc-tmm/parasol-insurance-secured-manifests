@@ -51,10 +51,17 @@ spec:
         #!/usr/bin/env bash
         set -uo pipefail
 
-        echo "Downloading ec binary from TAS cli-server..."
+        echo "Downloading ec and cosign from TAS cli-server..."
         curl -sL http://cli-server.trusted-artifact-signer.svc:8080/clients/linux/ec-amd64.gz \
           | gunzip > /usr/local/bin/ec
-        chmod +x /usr/local/bin/ec
+        curl -sL http://cli-server.trusted-artifact-signer.svc:8080/clients/linux/cosign-amd64.gz \
+          | gunzip > /usr/local/bin/cosign
+        chmod +x /usr/local/bin/ec /usr/local/bin/cosign
+
+        echo "Initializing TUF trust root..."
+        cosign initialize \
+          --mirror="http://tuf.trusted-artifact-signer.svc" \
+          --root="http://tuf.trusted-artifact-signer.svc/root.json" 2>/dev/null
 
         IMAGE_REF="${IMAGE}@${IMAGE_DIGEST}"
         POLICY_URL="git::https://${GITLAB_HOST}/parasol/conforma-policies.git//${POLICY_PATH}?ref=main"
