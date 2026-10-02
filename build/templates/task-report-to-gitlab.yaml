@@ -108,86 +108,7 @@ spec:
         lines.append("## Security Pipeline Results")
         lines.append("")
 
-        # --- ACS Image Scan section (informational, no pass/fail) ---
-        lines.append("### ACS Image Scan")
-        lines.append("")
-
-        scan_json_path = os.path.join(ws_path, "acs-results", "image-scan.json") if ws_path else ""
-        scan_data = None
-        if scan_json_path and os.path.isfile(scan_json_path):
-            try:
-                with open(scan_json_path) as f:
-                    scan_data = json.load(f)
-            except Exception:
-                pass
-
-        if scan_data:
-            summary = scan_data.get("result", {}).get("summary", {})
-            vulns = scan_data.get("result", {}).get("vulnerabilities", [])
-
-            sev_order = {"CRITICAL": 0, "IMPORTANT": 1, "MODERATE": 2, "LOW": 3}
-            sev_label = {"CRITICAL": "Critical", "IMPORTANT": "Important",
-                         "MODERATE": "Moderate", "LOW": "Low"}
-
-            # Count fixable vs not
-            counts = {}
-            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
-                total = summary.get(sev_key, 0)
-                fixable = 0
-                unfixable = 0
-                for vv in vulns:
-                    if vv.get("cveSeverity") == sev_key:
-                        if vv.get("componentFixedVersion", ""):
-                            fixable += 1
-                        else:
-                            unfixable += 1
-                counts[sev_key] = {"total": total, "fixable": fixable,
-                                   "unfixable": unfixable}
-
-            lines.append("Severity | Total | With available fixes | Without fixes")
-            lines.append("---------|-------|---------------------|---------------")
-            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
-                c = counts.get(sev_key, {})
-                lines.append("{} | {} | {} | {}".format(
-                    sev_label[sev_key], c.get("total", 0),
-                    c.get("fixable", 0), c.get("unfixable", 0)))
-            lines.append("")
-
-            # Sort vulns by severity then CVE ID
-            sorted_vulns = sorted(vulns,
-                key=lambda x: (sev_order.get(x.get("cveSeverity", ""), 99),
-                               x.get("cveId", "")))
-
-            total_vulns = len(sorted_vulns)
-            lines.append("<details>")
-            lines.append("<summary>CVE Details ({} vulnerabilities)</summary>".format(
-                total_vulns))
-            lines.append("")
-            lines.append("CVE ID | Severity | Component | Version | Fixed in")
-            lines.append("-------|----------|-----------|---------|----------")
-            for vv in sorted_vulns:
-                cve = vv.get("cveId", "N/A")
-                sev = sev_label.get(vv.get("cveSeverity", ""), "Unknown")
-                comp = vv.get("componentName", "N/A")
-                ver = vv.get("componentVersion", "N/A")
-                fix = vv.get("componentFixedVersion", "")
-                if not fix:
-                    fix = "No fix available"
-                lines.append("{} | {} | {} | {} | {}".format(
-                    cve, sev, comp, ver, fix))
-            lines.append("")
-            lines.append("</details>")
-        else:
-            lines.append("Severity | Total | With available fixes | Without fixes")
-            lines.append("---------|-------|---------------------|---------------")
-            lines.append("Critical | {} | - | -".format(v.get("critical", 0)))
-            lines.append("High | {} | - | -".format(v.get("high", 0)))
-            lines.append("Medium | {} | - | -".format(v.get("medium", 0)))
-            lines.append("Low | {} | - | -".format(v.get("low", 0)))
-
-        lines.append("")
-
-        # --- ACS Policy Check section ---
+        # --- ACS Policy Check section (first — this is the gate) ---
         check_icon = "✅" if check_status == "Succeeded" else "❌"
         lines.append("### {} ACS Policy Check".format(check_icon))
         lines.append("")
@@ -235,6 +156,83 @@ spec:
                 lines.append("No policy violations found.")
         else:
             lines.append("**Result: {}**".format(check_result))
+
+        lines.append("")
+
+        # --- ACS Image Scan section (informational) ---
+        lines.append("### 🔍 ACS Image Scan")
+        lines.append("")
+
+        scan_json_path = os.path.join(ws_path, "acs-results", "image-scan.json") if ws_path else ""
+        scan_data = None
+        if scan_json_path and os.path.isfile(scan_json_path):
+            try:
+                with open(scan_json_path) as f:
+                    scan_data = json.load(f)
+            except Exception:
+                pass
+
+        if scan_data:
+            summary = scan_data.get("result", {}).get("summary", {})
+            vulns = scan_data.get("result", {}).get("vulnerabilities", [])
+
+            sev_order = {"CRITICAL": 0, "IMPORTANT": 1, "MODERATE": 2, "LOW": 3}
+            sev_label = {"CRITICAL": "Critical", "IMPORTANT": "Important",
+                         "MODERATE": "Moderate", "LOW": "Low"}
+
+            counts = {}
+            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
+                total = summary.get(sev_key, 0)
+                fixable = 0
+                unfixable = 0
+                for vv in vulns:
+                    if vv.get("cveSeverity") == sev_key:
+                        if vv.get("componentFixedVersion", ""):
+                            fixable += 1
+                        else:
+                            unfixable += 1
+                counts[sev_key] = {"total": total, "fixable": fixable,
+                                   "unfixable": unfixable}
+
+            lines.append("Severity | Total | With available fixes | Without fixes")
+            lines.append("---------|-------|---------------------|---------------")
+            for sev_key in ["CRITICAL", "IMPORTANT", "MODERATE", "LOW"]:
+                c = counts.get(sev_key, {})
+                lines.append("{} | {} | {} | {}".format(
+                    sev_label[sev_key], c.get("total", 0),
+                    c.get("fixable", 0), c.get("unfixable", 0)))
+            lines.append("")
+
+            sorted_vulns = sorted(vulns,
+                key=lambda x: (sev_order.get(x.get("cveSeverity", ""), 99),
+                               x.get("cveId", "")))
+
+            total_vulns = len(sorted_vulns)
+            lines.append("<details>")
+            lines.append("<summary>CVE Details ({} vulnerabilities)</summary>".format(
+                total_vulns))
+            lines.append("")
+            lines.append("CVE ID | Severity | Component | Version | Fixed in")
+            lines.append("-------|----------|-----------|---------|----------")
+            for vv in sorted_vulns:
+                cve = vv.get("cveId", "N/A")
+                sev = sev_label.get(vv.get("cveSeverity", ""), "Unknown")
+                comp = vv.get("componentName", "N/A")
+                ver = vv.get("componentVersion", "N/A")
+                fix = vv.get("componentFixedVersion", "")
+                if not fix:
+                    fix = "No fix available"
+                lines.append("{} | {} | {} | {} | {}".format(
+                    cve, sev, comp, ver, fix))
+            lines.append("")
+            lines.append("</details>")
+        else:
+            lines.append("Severity | Total | With available fixes | Without fixes")
+            lines.append("---------|-------|---------------------|---------------")
+            lines.append("Critical | {} | - | -".format(v.get("critical", 0)))
+            lines.append("High | {} | - | -".format(v.get("high", 0)))
+            lines.append("Medium | {} | - | -".format(v.get("medium", 0)))
+            lines.append("Low | {} | - | -".format(v.get("low", 0)))
 
         with open("/tmp/report/note.md", "w") as f:
             f.write("\n".join(lines))
