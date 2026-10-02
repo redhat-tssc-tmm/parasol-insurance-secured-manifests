@@ -7,6 +7,9 @@ spec:
   params:
     - name: git-revision
       type: string
+  results:
+    - name: ACS_IMAGE_SCAN_OUTPUT
+      value: $(tasks.roxctl-image-scan.results.SCAN_OUTPUT)
   workspaces:
     - name: source
     - name: basic-auth
@@ -97,7 +100,7 @@ spec:
       taskRef:
         name: roxctl-image-scan
       params:
-        - name: image
+        - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
     - name: roxctl-image-check
       runAfter:
@@ -105,7 +108,7 @@ spec:
       taskRef:
         name: roxctl-image-check
       params:
-        - name: image
+        - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
     - name: rollout-restart
       runAfter:

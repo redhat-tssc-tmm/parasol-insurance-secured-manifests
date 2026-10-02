@@ -13,6 +13,9 @@ spec:
       type: string
     - name: project-id
       type: string
+  results:
+    - name: ACS_IMAGE_SCAN_OUTPUT
+      value: $(tasks.roxctl-image-scan.results.SCAN_OUTPUT)
   workspaces:
     - name: source
     - name: basic-auth
@@ -83,7 +86,7 @@ spec:
       taskRef:
         name: roxctl-image-scan
       params:
-        - name: image
+        - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
     - name: roxctl-image-check
       runAfter:
@@ -91,7 +94,7 @@ spec:
       taskRef:
         name: roxctl-image-check
       params:
-        - name: image
+        - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
   finally:
     - name: report-to-gitlab
@@ -110,15 +113,5 @@ spec:
           value: $(tasks.roxctl-image-scan.status)
         - name: check_status
           value: $(tasks.roxctl-image-check.status)
-        - name: scan_results
-          value: $(tasks.roxctl-image-scan.results.SCAN_RESULTS)
-        - name: scan_critical
-          value: $(tasks.roxctl-image-scan.results.CRITICAL_COUNT)
-        - name: scan_high
-          value: $(tasks.roxctl-image-scan.results.HIGH_COUNT)
-        - name: scan_medium
-          value: $(tasks.roxctl-image-scan.results.MEDIUM_COUNT)
-        - name: check_result
-          value: $(tasks.roxctl-image-check.results.CHECK_RESULT)
-        - name: check_summary
-          value: $(tasks.roxctl-image-check.results.VIOLATIONS_SUMMARY)
+        - name: scan_output
+          value: $(tasks.roxctl-image-scan.results.SCAN_OUTPUT)

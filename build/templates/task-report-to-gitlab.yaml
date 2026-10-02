@@ -23,31 +23,16 @@ spec:
     - name: check_status
       type: string
       default: "success"
-    - name: scan_results
+    - name: scan_output
       type: string
-      default: "No scan data"
-    - name: scan_critical
-      type: string
-      default: "0"
-    - name: scan_high
-      type: string
-      default: "0"
-    - name: scan_medium
-      type: string
-      default: "0"
-    - name: check_result
-      type: string
-      default: "N/A"
-    - name: check_summary
-      type: string
-      default: "No check data"
+      default: "{}"
   volumes:
     - name: gitlab-token
       secret:
         secretName: gitlab-credentials
   steps:
     - name: set-commit-statuses
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: registry.access.redhat.com/ubi9:latest
       volumeMounts:
         - name: gitlab-token
           mountPath: /secrets/gitlab-token
@@ -60,6 +45,18 @@ spec:
         PROJECT_ID="$(params.project_id)"
         COMMIT_SHA="$(params.commit_sha)"
         API_URL="https://${GITLAB_HOST}/api/v4/projects/${PROJECT_ID}/statuses/${COMMIT_SHA}"
+
+        # Parse scan output JSON for status descriptions
+        SCAN_OUTPUT='$(params.scan_output)'
+        SCAN_DESC=$(python3 -c "
+        import json
+        try:
+            data = json.loads('${SCAN_OUTPUT}'.replace(\"'\", \"\"))
+            v = data.get('vulnerabilities', {})
+            print(f\"Critical: {v.get('critical',0)}, High: {v.get('high',0)}, Medium: {v.get('medium',0)}\")
+        except:
+            print('Scan completed')
+        " 2>/dev/null || echo "Scan completed")
 
         set_status() {
           local name="$1"
@@ -76,12 +73,19 @@ spec:
           echo "Set status '${name}' to '${state}': ${description}"
         }
 
-        set_status "build" "$(params.build_status)" "Build pipeline"
-        set_status "acs-image-scan" "$(params.scan_status)" "$(params.scan_results)"
-        set_status "acs-image-check" "$(params.check_status)" "$(params.check_result): $(params.check_summary)"
+        BUILD_STATE="$(params.build_status)"
+        [ "${BUILD_STATE}" = "Succeeded" ] && BUILD_STATE="success" || BUILD_STATE="failed"
+        SCAN_STATE="$(params.scan_status)"
+        [ "${SCAN_STATE}" = "Succeeded" ] && SCAN_STATE="success" || SCAN_STATE="failed"
+        CHECK_STATE="$(params.check_status)"
+        [ "${CHECK_STATE}" = "Succeeded" ] && CHECK_STATE="success" || CHECK_STATE="failed"
+
+        set_status "build" "${BUILD_STATE}" "Image build"
+        set_status "acs-image-scan" "${SCAN_STATE}" "${SCAN_DESC}"
+        set_status "acs-image-check" "${CHECK_STATE}" "ACS policy check"
 
     - name: post-mr-note
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: registry.access.redhat.com/ubi9:latest
       volumeMounts:
         - name: gitlab-token
           mountPath: /secrets/gitlab-token
@@ -97,36 +101,80 @@ spec:
 
         SCAN_STATUS="$(params.scan_status)"
         CHECK_STATUS="$(params.check_status)"
+
         SCAN_ICON="✅"
         CHECK_ICON="✅"
-        [ "${SCAN_STATUS}" != "success" ] && SCAN_ICON="❌"
-        [ "${CHECK_STATUS}" != "success" ] && CHECK_ICON="❌"
+        [ "${SCAN_STATUS}" != "Succeeded" ] && SCAN_ICON="❌"
+        [ "${CHECK_STATUS}" != "Succeeded" ] && CHECK_ICON="❌"
 
-        NOTE_BODY=$(cat <<'NOTEEOF'
-        ## Security Pipeline Results
+        SCAN_OUTPUT='$(params.scan_output)'
+        NOTE_BODY=$(python3 << 'PYEOF'
+        import json, os
+        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
+        scan_icon = os.environ.get("SCAN_ICON", "")
+        check_icon = os.environ.get("CHECK_ICON", "")
+        check_status = os.environ.get("CHECK_STATUS", "")
 
-        ### ACS Image Scan ${SCAN_ICON}
-        | Severity | Count |
-        |----------|-------|
-        | Critical | $(params.scan_critical) |
-        | High | $(params.scan_high) |
-        | Medium | $(params.scan_medium) |
+        try:
+            data = json.loads(scan_output)
+            v = data.get("vulnerabilities", {})
+            uv = data.get("unpatched_vulnerabilities", {})
+        except:
+            v = {}
+            uv = {}
 
-        ### ACS Policy Check ${CHECK_ICON}
-        **Result: $(params.check_result)**
+        check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
 
-        $(params.check_summary)
-        NOTEEOF
+        note = f"""## Security Pipeline Results
+
+### ACS Image Scan {scan_icon}
+| Severity | Total | Unpatched |
+|----------|-------|-----------|
+| Critical | {v.get('critical', 0)} | {uv.get('critical', 0)} |
+| High | {v.get('high', 0)} | {uv.get('high', 0)} |
+| Medium | {v.get('medium', 0)} | {uv.get('medium', 0)} |
+| Low | {v.get('low', 0)} | {uv.get('low', 0)} |
+
+### ACS Policy Check {check_icon}
+**Result: {check_result}**
+"""
+        print(note)
+        PYEOF
         )
 
-        NOTE_BODY=$(echo "${NOTE_BODY}" | sed \
-          -e "s|\${SCAN_ICON}|${SCAN_ICON}|g" \
-          -e "s|\${CHECK_ICON}|${CHECK_ICON}|g" \
-          -e 's|\$(params\.scan_critical)|'"$(params.scan_critical)"'|g' \
-          -e 's|\$(params\.scan_high)|'"$(params.scan_high)"'|g' \
-          -e 's|\$(params\.scan_medium)|'"$(params.scan_medium)"'|g' \
-          -e 's|\$(params\.check_result)|'"$(params.check_result)"'|g' \
-          -e 's|\$(params\.check_summary)|'"$(params.check_summary)"'|g' \
+        export SCAN_OUTPUT CHECK_STATUS="${CHECK_STATUS}" SCAN_ICON CHECK_ICON
+        NOTE_BODY=$(SCAN_OUTPUT="${SCAN_OUTPUT}" SCAN_ICON="${SCAN_ICON}" CHECK_ICON="${CHECK_ICON}" CHECK_STATUS="${CHECK_STATUS}" python3 << 'PYEOF'
+        import json, os
+        scan_output = os.environ.get("SCAN_OUTPUT", "{}")
+        scan_icon = os.environ.get("SCAN_ICON", "")
+        check_icon = os.environ.get("CHECK_ICON", "")
+        check_status = os.environ.get("CHECK_STATUS", "")
+
+        try:
+            data = json.loads(scan_output)
+            v = data.get("vulnerabilities", {})
+            uv = data.get("unpatched_vulnerabilities", {})
+        except:
+            v = {}
+            uv = {}
+
+        check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
+
+        note = f"""## Security Pipeline Results
+
+### ACS Image Scan {scan_icon}
+| Severity | Total | Unpatched |
+|----------|-------|-----------|
+| Critical | {v.get('critical', 0)} | {uv.get('critical', 0)} |
+| High | {v.get('high', 0)} | {uv.get('high', 0)} |
+| Medium | {v.get('medium', 0)} | {uv.get('medium', 0)} |
+| Low | {v.get('low', 0)} | {uv.get('low', 0)} |
+
+### ACS Policy Check {check_icon}
+**Result: {check_result}**
+"""
+        print(note)
+        PYEOF
         )
 
         curl -sk --fail-with-body \
