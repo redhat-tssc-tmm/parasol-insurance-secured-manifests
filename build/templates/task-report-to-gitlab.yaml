@@ -58,27 +58,33 @@ spec:
             print('Scan completed')
         " 2>/dev/null || echo "Scan completed")
 
+        map_state() {
+          case "$1" in
+            Succeeded) echo "success" ;;
+            Failed)    echo "failed" ;;
+            *)         echo "failed" ;;
+          esac
+        }
+
         set_status() {
           local name="$1"
           local state="$2"
           local description="$3"
 
-          curl -sk --fail-with-body \
+          RESPONSE=$(curl -sk -w "\n%{http_code}" \
             --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
             --data-urlencode "state=${state}" \
             --data-urlencode "name=${name}" \
             --data-urlencode "description=${description}" \
-            "${API_URL}" > /dev/null
+            "${API_URL}")
 
-          echo "Set status '${name}' to '${state}': ${description}"
+          HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
+          echo "Set status '${name}' to '${state}': ${description} (HTTP ${HTTP_CODE})"
         }
 
-        BUILD_STATE="$(params.build_status)"
-        [ "${BUILD_STATE}" = "Succeeded" ] && BUILD_STATE="success" || BUILD_STATE="failed"
-        SCAN_STATE="$(params.scan_status)"
-        [ "${SCAN_STATE}" = "Succeeded" ] && SCAN_STATE="success" || SCAN_STATE="failed"
-        CHECK_STATE="$(params.check_status)"
-        [ "${CHECK_STATE}" = "Succeeded" ] && CHECK_STATE="success" || CHECK_STATE="failed"
+        BUILD_STATE=$(map_state "$(params.build_status)")
+        SCAN_STATE=$(map_state "$(params.scan_status)")
+        CHECK_STATE=$(map_state "$(params.check_status)")
 
         set_status "build" "${BUILD_STATE}" "Image build"
         set_status "acs-image-scan" "${SCAN_STATE}" "${SCAN_DESC}"
