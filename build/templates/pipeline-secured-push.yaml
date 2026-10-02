@@ -124,6 +124,6 @@ spec:
         name: rollout-restart
       params:
         - name: DEPLOYMENT
-          value: parasol-insurance-secured
+          value: parasol-insurance
         - name: NAMESPACE
           value: {{ .Values.preprodNamespace }}
