@@ -15,6 +15,15 @@ spec:
     - name: policy_path
       type: string
       default: "policies/minimal-base-policy"
+    - name: certificate_oidc_issuer
+      type: string
+      default: "https://kubernetes.default.svc"
+    - name: certificate_identity
+      type: string
+      default: "https://kubernetes.io/namespaces/openshift-pipelines/serviceaccounts/tekton-chains-controller"
+    - name: rekor_url
+      type: string
+      default: "http://rekor-server.trusted-artifact-signer.svc"
   results:
     - name: EC_RESULT
       description: Enterprise Contract validation result (PASS or FAIL)
@@ -32,6 +41,12 @@ spec:
           value: $(params.gitlab_host)
         - name: POLICY_PATH
           value: $(params.policy_path)
+        - name: CERTIFICATE_OIDC_ISSUER
+          value: $(params.certificate_oidc_issuer)
+        - name: CERTIFICATE_IDENTITY
+          value: $(params.certificate_identity)
+        - name: REKOR_URL
+          value: $(params.rekor_url)
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
@@ -50,7 +65,9 @@ spec:
         ec validate image \
           --image "${IMAGE_REF}" \
           --policy "${POLICY_URL}" \
-          --ignore-rekor \
+          --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+          --certificate-identity "${CERTIFICATE_IDENTITY}" \
+          --rekor-url "${REKOR_URL}" \
           --output json > /tmp/ec-report.json 2>/tmp/ec-stderr.txt
         EC_EXIT=$?
 
