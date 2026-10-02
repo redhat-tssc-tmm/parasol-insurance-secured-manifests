@@ -60,11 +60,13 @@ spec:
         EC_JSON="$(workspaces.source.path)/ec-results/result.json"
         if [ -f "${EC_JSON}" ]; then
           MR_BODY=$(python3 -c "
-        import json
+        import json, os
+        digest = os.environ.get('IMAGE_DIGEST', '')
+        tag = os.environ.get('IMAGE_TAG', '')
         with open('${EC_JSON}') as f:
             data = json.load(f)
         lines = ['## Production Promotion', '']
-        lines.append('Image: \`${IMAGE_TAG}\` (\`${IMAGE_DIGEST[:16]}...\`)')
+        lines.append(f'Image: \`{tag}\` (\`{digest[:16]}...\`)')
         lines.append('')
         lines.append('### Conforma/EC Validation')
         lines.append('')
