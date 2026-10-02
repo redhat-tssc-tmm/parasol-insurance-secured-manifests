@@ -31,8 +31,8 @@ spec:
               IMAGE="{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
               echo "Inspecting image: ${IMAGE}"
 
-              DIGEST=$(skopeo inspect --tls-verify=false "docker://${IMAGE}" | jq -r '.Digest')
-              if [ -z "${DIGEST}" ] || [ "${DIGEST}" == "null" ]; then
+              DIGEST=$(skopeo inspect --tls-verify=false --format '{{`{{.Digest}}`}}' "docker://${IMAGE}")
+              if [ -z "${DIGEST}" ]; then
                 echo "ERROR: Could not get digest for ${IMAGE}"
                 exit 1
               fi
