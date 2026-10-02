@@ -41,7 +41,7 @@ spec:
   steps:
     - name: prepare-report
       image: registry.access.redhat.com/ubi9:latest
-      resources:
+      computeResources:
         requests:
           cpu: 100m
           memory: 128Mi
@@ -241,7 +241,7 @@ spec:
         PYEOF
     - name: set-commit-statuses
       image: registry.access.redhat.com/ubi9:latest
-      resources:
+      computeResources:
         requests:
           cpu: 100m
           memory: 128Mi
@@ -288,7 +288,7 @@ spec:
         PYEOF
     - name: post-mr-note
       image: registry.access.redhat.com/ubi9-minimal:latest
-      resources:
+      computeResources:
         requests:
           cpu: 100m
           memory: 128Mi

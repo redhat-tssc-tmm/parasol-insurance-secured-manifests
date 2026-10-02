@@ -19,7 +19,7 @@ spec:
   steps:
     - name: set-status
       image: registry.access.redhat.com/ubi9-minimal:latest
-      resources:
+      computeResources:
         requests:
           cpu: 50m
           memory: 64Mi

@@ -22,7 +22,7 @@ spec:
   steps:
     - name: update
       image: registry.access.redhat.com/ubi9:latest
-      resources:
+      computeResources:
         requests:
           cpu: 50m
           memory: 64Mi
