@@ -56,9 +56,47 @@ spec:
         git commit -m "chore: promote ${IMAGE_TAG} (${IMAGE_DIGEST}) to prod"
         git push origin "${BRANCH}"
 
+        # Build MR description with EC validation results
+        EC_JSON="$(workspaces.source.path)/ec-results/result.json"
+        if [ -f "${EC_JSON}" ]; then
+          MR_BODY=$(python3 -c "
+        import json
+        with open('${EC_JSON}') as f:
+            data = json.load(f)
+        lines = ['## Production Promotion', '']
+        lines.append('Image: \`${IMAGE_TAG}\` (\`${IMAGE_DIGEST[:16]}...\`)')
+        lines.append('')
+        lines.append('### Conforma/EC Validation')
+        lines.append('')
+        comps = data.get('components', [])
+        for c in comps:
+            successes = c.get('successes', [])
+            violations = c.get('violations', [])
+            warnings = c.get('warnings', [])
+            lines.append(f'**Summary:** {len(violations)} violations, {len(warnings)} warnings, {len(successes)} passed')
+            lines.append('')
+            lines.append('Rule | Status')
+            lines.append('-----|-------')
+            for s in successes:
+                lines.append(f'{s.get(\"metadata\",{}).get(\"title\", s.get(\"msg\",\"?\"))} | Pass')
+            for w in warnings:
+                lines.append(f'{w.get(\"metadata\",{}).get(\"title\", w.get(\"msg\",\"?\"))} | Warning')
+            for v in violations:
+                lines.append(f'{v.get(\"metadata\",{}).get(\"title\", v.get(\"msg\",\"?\"))} | Violation')
+        print('\n'.join(lines))
+        " 2>/dev/null)
+        else
+          MR_BODY="## Production Promotion
+
+        Image: \`${IMAGE_TAG}\` (\`${IMAGE_DIGEST}\`)
+
+        EC validation results not available."
+        fi
+
         curl -k --fail \
           --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
           --data-urlencode "source_branch=${BRANCH}" \
           --data-urlencode "target_branch=main" \
           --data-urlencode "title=Promote ${IMAGE_TAG} to production (verified by EC)" \
+          --data-urlencode "description=${MR_BODY}" \
           "https://${GITLAB_HOST}/api/v4/projects/{{ .Values.tenant.username }}%2Fparasol-insurance-secured-manifests/merge_requests"

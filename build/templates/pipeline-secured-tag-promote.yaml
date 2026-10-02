@@ -52,6 +52,9 @@ spec:
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}"
         - name: image_digest
           value: $(tasks.get-image-sha.results.IMAGE_DIGEST)
+      workspaces:
+        - name: source
+          workspace: source
     - name: skopeo-copy
       runAfter:
         - ec-validate

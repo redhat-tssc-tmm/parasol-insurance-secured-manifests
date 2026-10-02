@@ -33,6 +33,9 @@ spec:
   results:
     - name: CONFORMA_OUTPUT
       description: Conforma validation result summary for RHDH
+  workspaces:
+    - name: source
+      optional: true
   volumes:
     - name: ec-output
       emptyDir: {}
@@ -89,6 +92,12 @@ spec:
           --output text=/tmp/ec-output/result.txt \
           --show-successes \
           --info
+
+        if [ -d "$(workspaces.source.path)" ]; then
+          mkdir -p "$(workspaces.source.path)/ec-results"
+          cp /tmp/ec-output/result.json "$(workspaces.source.path)/ec-results/" 2>/dev/null || true
+          cp /tmp/ec-output/result.txt "$(workspaces.source.path)/ec-results/" 2>/dev/null || true
+        fi
 
         echo "EC validation completed"
     - name: summary
