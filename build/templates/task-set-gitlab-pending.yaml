@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: set-gitlab-pending
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: gitlab_host
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+    - name: project_id
+      type: string
+    - name: commit_sha
+      type: string
+  volumes:
+    - name: gitlab-token
+      secret:
+        secretName: gitlab-credentials
+  steps:
+    - name: set-pending
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
+
+        for STATUS_NAME in "build" "acs-image-scan" "acs-image-check"; do
+          curl -sk -w "\n" \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data-urlencode "state=pending" \
+            --data-urlencode "name=${STATUS_NAME}" \
+            --data-urlencode "description=Pipeline running..." \
+            "${API_URL}" > /dev/null
+          echo "Set '${STATUS_NAME}' to pending"
+        done

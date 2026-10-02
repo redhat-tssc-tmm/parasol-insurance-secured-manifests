@@ -22,7 +22,17 @@ spec:
     - name: dockerconfig
     - name: maven-cache
   tasks:
+    - name: set-pending-status
+      taskRef:
+        name: set-gitlab-pending
+      params:
+        - name: project_id
+          value: $(params.project-id)
+        - name: commit_sha
+          value: $(params.commit-sha)
     - name: clone-source
+      runAfter:
+        - set-pending-status
       taskRef:
         resolver: cluster
         params:
@@ -90,7 +100,7 @@ spec:
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
     - name: roxctl-image-check
       runAfter:
-        - roxctl-image-scan
+        - build-and-push
       taskRef:
         name: roxctl-image-check
       params:
