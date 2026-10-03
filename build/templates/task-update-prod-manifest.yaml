@@ -63,7 +63,7 @@ spec:
         IMAGE_NAME="{{ .Values.image.name }}"
         QUAY_URL="https://${QUAY_HOST}/repository/${IMAGE_ORG}/${IMAGE_NAME}/manifest/${IMAGE_DIGEST}"
 
-        export IMAGE_DIGEST IMAGE_TAG QUAY_URL
+        export IMAGE_DIGEST IMAGE_TAG QUAY_URL EC_JSON
         if [ -f "${EC_JSON}" ]; then
           MR_BODY=$(python3 << 'PYEOF'
         import json, os
