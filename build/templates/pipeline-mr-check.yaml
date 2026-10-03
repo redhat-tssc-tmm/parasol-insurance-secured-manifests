@@ -13,9 +13,6 @@ spec:
       type: string
     - name: project-id
       type: string
-  results:
-    - name: ACS_IMAGE_SCAN_OUTPUT
-      value: $(tasks.roxctl-image-scan.results.SCAN_OUTPUT)
   workspaces:
     - name: source
     - name: basic-auth
@@ -145,4 +142,4 @@ spec:
         - name: check_status
           value: $(tasks.roxctl-image-check.status)
         - name: scan_output
-          value: $(tasks.roxctl-image-scan.results.SCAN_OUTPUT)
+          value: "{}"
