@@ -99,22 +99,22 @@ spec:
           value: $(params.commit-sha)
         - name: statuses
           value: '[{"name":"build","state":"success","description":"Image built successfully"},{"name":"acs-image-scan","state":"running","description":"Scanning image for vulnerabilities..."},{"name":"acs-image-check","state":"running","description":"Checking image against policies..."}]'
-    - name: roxctl-image-scan
+    - name: acs-image-scan
       runAfter:
         - update-build-complete
       taskRef:
-        name: roxctl-image-scan
+        name: acs-image-scan
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
       workspaces:
         - name: source
           workspace: source
-    - name: roxctl-image-check
+    - name: acs-image-check
       runAfter:
         - update-build-complete
       taskRef:
-        name: roxctl-image-check
+        name: acs-image-check
       params:
         - name: IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:mr-$(params.merge-request-iid)"
@@ -138,8 +138,8 @@ spec:
         - name: build_status
           value: $(tasks.build-and-push.status)
         - name: scan_status
-          value: $(tasks.roxctl-image-scan.status)
+          value: $(tasks.acs-image-scan.status)
         - name: check_status
-          value: $(tasks.roxctl-image-check.status)
+          value: $(tasks.acs-image-check.status)
         - name: scan_output
           value: "{}"
