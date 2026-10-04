@@ -105,7 +105,7 @@ spec:
 
         # --- Build MR note ---
         lines = []
-        lines.append("## Security Pipeline Results")
+        lines.append("## Merge Request Check Results")
         lines.append("")
 
         # --- ACS Policy Check section (first — this is the gate) ---
@@ -132,8 +132,8 @@ spec:
                 non_breaking = [p for p in policies
                                 if not p.get("failingCheck", False)]
 
-                lines.append("{} policies evaluated, {} with violations that block merge".format(
-                    total_policies, len(breaking)))
+                lines.append("ACS policies evaluated, {} with violations that block merge".format(
+                    len(breaking)))
                 lines.append("")
 
                 lines.append("<details>")

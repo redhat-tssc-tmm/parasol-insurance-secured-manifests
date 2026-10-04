@@ -15,30 +15,11 @@ spec:
     - name: dockerconfig
   tasks:
     - name: get-image-sha
-      taskSpec:
-        results:
-          - name: IMAGE_DIGEST
-            description: SHA256 digest of the latest image
-        steps:
-          - name: inspect
-            image: registry.redhat.io/rhel9/skopeo:latest
-            env:
-              - name: REGISTRY_AUTH_FILE
-                value: /workspace/dockerconfig/.dockerconfigjson
-            script: |
-              #!/usr/bin/env bash
-              set -euo pipefail
-              IMAGE="{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
-              echo "Inspecting image: ${IMAGE}"
-
-              DIGEST=$(skopeo inspect --tls-verify=false --format '{{`{{.Digest}}`}}' "docker://${IMAGE}")
-              if [ -z "${DIGEST}" ]; then
-                echo "ERROR: Could not get digest for ${IMAGE}"
-                exit 1
-              fi
-
-              echo -n "${DIGEST}" > $(results.IMAGE_DIGEST.path)
-              echo "Image digest: ${DIGEST}"
+      taskRef:
+        name: get-image-sha
+      params:
+        - name: IMAGE
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
       workspaces:
         - name: dockerconfig
           workspace: dockerconfig
@@ -58,30 +39,12 @@ spec:
     - name: skopeo-copy
       runAfter:
         - ec-validate
-      taskSpec:
-        params:
-          - name: src-image
-            type: string
-          - name: dst-image
-            type: string
-        steps:
-          - name: copy
-            image: registry.redhat.io/rhel9/skopeo:latest
-            env:
-              - name: REGISTRY_AUTH_FILE
-                value: /workspace/dockerconfig/.dockerconfigjson
-            script: |
-              #!/usr/bin/env bash
-              set -euo pipefail
-              echo "Copying $(params.src-image) → $(params.dst-image)"
-              skopeo copy --all --tls-verify=false \
-                "docker://$(params.src-image)" \
-                "docker://$(params.dst-image)"
-              echo "Image tagged successfully"
+      taskRef:
+        name: skopeo-copy
       params:
-        - name: src-image
+        - name: SRC_IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:latest"
-        - name: dst-image
+        - name: DST_IMAGE
           value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:$(params.git-tag)"
       workspaces:
         - name: dockerconfig

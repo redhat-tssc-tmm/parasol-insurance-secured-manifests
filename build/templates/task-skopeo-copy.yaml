@@ -1,0 +1,29 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: skopeo-copy
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: SRC_IMAGE
+      type: string
+      description: Source image reference
+    - name: DST_IMAGE
+      type: string
+      description: Destination image reference
+  workspaces:
+    - name: dockerconfig
+  steps:
+    - name: copy
+      image: registry.redhat.io/rhel9/skopeo:latest
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: $(workspaces.dockerconfig.path)/.dockerconfigjson
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "Copying $(params.SRC_IMAGE) → $(params.DST_IMAGE)"
+        skopeo copy --all --tls-verify=false \
+          "docker://$(params.SRC_IMAGE)" \
+          "docker://$(params.DST_IMAGE)"
+        echo "Image tagged successfully"
