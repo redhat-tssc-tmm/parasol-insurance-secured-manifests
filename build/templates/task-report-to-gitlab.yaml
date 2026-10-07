@@ -90,8 +90,32 @@ spec:
 
         check_result = "PASSED" if check_status == "Succeeded" else "FAILED"
 
+        # Read signature verification result
+        sig_state = "failed"
+        sig_desc = "Signature not verified"
+        sig_json_path = os.path.join(ws_path, "signature-results",
+                                     "status.json") if ws_path else ""
+        if sig_json_path and os.path.isfile(sig_json_path):
+            try:
+                with open(sig_json_path) as f:
+                    sig = json.load(f)
+                sig_status = sig.get("status", "")
+                if sig_status == "SIGNED":
+                    sig_state = "success"
+                    sig_desc = "Signed by " + sig.get("signer", sig.get("email", "verified"))
+                elif sig_status == "BOT_COMMIT":
+                    sig_state = "success"
+                    sig_desc = "Automated commit (signature not required)"
+                else:
+                    sig_state = "failed"
+                    sig_desc = "Unsigned commit"
+            except Exception:
+                pass
+
         # Commit statuses
         statuses = [
+            {"name": "commit-verification", "state": sig_state,
+             "description": sig_desc, "target_url": target_url},
             {"name": "build", "state": map_state(build_status),
              "description": "Image build", "target_url": target_url},
             {"name": "acs-image-scan", "state": map_state(scan_status),

@@ -46,6 +46,7 @@ spec:
           echo "$2: $1 — $3"
         }
 
-        set_status "running" "build"           "Building and testing image..."
-        set_status "pending" "acs-image-scan"   "Waiting for build to complete"
-        set_status "pending" "acs-image-check"  "Waiting for build to complete"
+        set_status "running" "commit-verification" "Verifying commit signature..."
+        set_status "pending" "build"               "Waiting for commit verification"
+        set_status "pending" "acs-image-scan"       "Waiting for build to complete"
+        set_status "pending" "acs-image-check"      "Waiting for build to complete"
