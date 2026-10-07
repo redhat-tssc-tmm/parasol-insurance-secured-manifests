@@ -19,6 +19,8 @@ spec:
       description: Link to the SonarQube quality report
     - name: SONAR_QUALITY_GATE
       description: Quality gate status (PASSED or FAILED)
+    - name: SONAR_QUALITY_RESULT
+      description: JSON with quality gate details for attestation
   workspaces:
     - name: source
     - name: sonar-credentials
@@ -69,6 +71,43 @@ spec:
         echo "============================================"
         echo "SonarQube Report: ${REPORT_URL}"
         echo "============================================"
-        echo ""
 
+        echo "Fetching quality gate details from SonarQube API..."
+        QG_RESPONSE=$(curl -sk -u "${SONAR_LOGIN}:${SONAR_PASSWORD}" \
+          "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}" 2>/dev/null)
+
+        MEASURES_RESPONSE=$(curl -sk -u "${SONAR_LOGIN}:${SONAR_PASSWORD}" \
+          "${SONAR_HOST_URL}/api/measures/component?component=${SONAR_PROJECT_KEY}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots,reliability_rating,security_rating" 2>/dev/null)
+
+        python3 -c "
+        import json, sys
+        try:
+            qg = json.loads('''${QG_RESPONSE}''')
+            ms = json.loads('''${MEASURES_RESPONSE}''')
+        except:
+            print('{}', end='')
+            sys.exit()
+        status = qg.get('projectStatus', {}).get('status', 'UNKNOWN')
+        conditions = []
+        for c in qg.get('projectStatus', {}).get('conditions', []):
+            conditions.append({
+                'metric': c.get('metricKey', ''),
+                'status': c.get('status', ''),
+                'value': c.get('actualValue', ''),
+                'threshold': c.get('errorThreshold', '')
+            })
+        metrics = {}
+        for m in ms.get('component', {}).get('measures', []):
+            metrics[m['metric']] = m.get('value', '')
+        result = {
+            'qualityGateStatus': status,
+            'conditions': conditions,
+            'metrics': metrics,
+            'projectKey': '${SONAR_PROJECT_KEY}',
+            'dashboardUrl': '${REPORT_URL}'
+        }
+        print(json.dumps(result), end='')
+        " > $(results.SONAR_QUALITY_RESULT.path)
+
+        echo "Quality gate details stored in SONAR_QUALITY_RESULT"
         exit ${SCAN_EXIT}

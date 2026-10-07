@@ -12,6 +12,10 @@ spec:
       value: $(tasks.acs-image-scan.results.SCAN_OUTPUT)
     - name: COMMIT_SIGNATURE_STATUS
       value: $(tasks.verify-commit-signature.results.SIGNATURE_STATUS)
+    - name: SONAR_QUALITY_RESULT
+      value: $(tasks.sonar-scan.results.SONAR_QUALITY_RESULT)
+    - name: ACS_IMAGE_CHECK_STATUS
+      value: $(tasks.acs-image-check.status)
   workspaces:
     - name: source
     - name: basic-auth

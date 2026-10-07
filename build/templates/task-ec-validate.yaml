@@ -20,7 +20,7 @@ spec:
       default: "{{ .Values.gitlab.host }}"
     - name: policy_path
       type: string
-      default: "policies/minimal-base-policy"
+      default: "policies/parasol-software-supply-chain"
     - name: certificate_oidc_issuer
       type: string
       default: "https://kubernetes.default.svc"
