@@ -66,7 +66,6 @@ spec:
           --mirror="http://tuf.trusted-artifact-signer.svc" \
           --root="http://tuf.trusted-artifact-signer.svc/root.json" 2>/dev/null
 
-        # --- Helper to write results and exit ---
         write_results() {
           local status="$1" details="$2" signer="${3:-}" issuer="${4:-}" ts="${5:-}"
           mkdir -p "${WORKSPACE_PATH}/signature-results"
@@ -78,7 +77,6 @@ spec:
           echo "$details"
         }
 
-        # --- Check for automated bot commit ---
         COMMITTER_EMAIL=$(git log -1 --format='%ce')
         COMMIT_DATE=$(git log -1 --format='%ci')
         AUTOMATED_BY=$(git log -1 --format='%(trailers:key=Automated-By,valueonly)' 2>/dev/null | tr -d '[:space:]')
@@ -90,48 +88,26 @@ spec:
           exit 0
         fi
 
-        # --- Verify commit signature ---
-        echo "Verifying commit signature..."
-        VERIFY_OUTPUT=$(git verify-commit HEAD 2>&1) || true
-        VERIFY_EXIT=$?
+        echo "Verifying commit signature with gitsign..."
+        VERIFY_OUTPUT=$(gitsign verify \
+          --certificate-identity-regexp=".*@${ALLOWED_DOMAIN}" \
+          --certificate-oidc-issuer-regexp=".*" \
+          HEAD 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
 
-        # gitsign verify-commit exits 0 on valid signature
-        if echo "$VERIFY_OUTPUT" | grep -qi "good signature\|validated signature"; then
-          # Extract signer email from the certificate
-          SIGNER_EMAIL=$(echo "$VERIFY_OUTPUT" | grep -oP '(?:email|san:email:)\s*\K\S+' | head -1 || true)
-          if [ -z "$SIGNER_EMAIL" ]; then
-            # Try alternative extraction from certificate subject
-            SIGNER_EMAIL=$(echo "$VERIFY_OUTPUT" | grep -oP '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' | head -1 || true)
-          fi
-          SIGNER_ISSUER=$(echo "$VERIFY_OUTPUT" | grep -i "issuer" | head -1 | sed 's/.*issuer[: ]*//' || true)
+        echo "gitsign verify exit code: ${VERIFY_EXIT}"
+        echo "${VERIFY_OUTPUT}"
 
-          # Check domain
-          if [ -n "$SIGNER_EMAIL" ]; then
-            DOMAIN="${SIGNER_EMAIL##*@}"
-            if [ "$DOMAIN" = "$ALLOWED_DOMAIN" ]; then
-              write_results "SIGNED" \
-                "✅ Good signature — ${SIGNER_EMAIL} (signed at ${COMMIT_DATE})" \
-                "$SIGNER_EMAIL" "$SIGNER_ISSUER" "$COMMIT_DATE"
-              echo "Signer: ${SIGNER_EMAIL}"
-              echo "Issuer: ${SIGNER_ISSUER}"
-              echo "Commit date: ${COMMIT_DATE}"
-              exit 0
-            else
-              echo "WARNING: Signer domain '${DOMAIN}' does not match allowed domain '${ALLOWED_DOMAIN}'"
-            fi
-          fi
-
-          # Signed but could not extract or domain mismatch — still treat as signed
+        if [ "${VERIFY_EXIT}" -eq 0 ]; then
+          SIGNER_EMAIL=$(echo "$VERIFY_OUTPUT" | grep -oP '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' | head -1 || true)
+          SIGNER_ISSUER=$(echo "$VERIFY_OUTPUT" | grep -i "issuer" | head -1 | sed 's/.*[Ii]ssuer[: ]*//' || true)
           write_results "SIGNED" \
-            "✅ Good signature — ${SIGNER_EMAIL:-unknown signer} (signed at ${COMMIT_DATE})" \
+            "✅ Good signature — ${SIGNER_EMAIL:-verified signer} (signed at ${COMMIT_DATE})" \
             "${SIGNER_EMAIL:-unknown}" "${SIGNER_ISSUER:-unknown}" "$COMMIT_DATE"
           exit 0
         fi
 
-        # --- Unsigned commit ---
         echo "WARNING! UNSIGNED COMMIT DETECTED!"
         echo "Committer: ${COMMITTER_EMAIL}"
-        echo "Verify output: ${VERIFY_OUTPUT}"
 
         write_results "UNSIGNED" "⚠️ WARNING! UNSIGNED COMMIT DETECTED!"
 
