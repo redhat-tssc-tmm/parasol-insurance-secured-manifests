@@ -23,7 +23,7 @@ spec:
     - name: source
   steps:
     - name: verify
-      image: registry.redhat.io/openshift4/ose-cli-rhel9:latest
+      image: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel9@sha256:6ed2659105c59b326dd0e450c144578c0cae1ee23cb40e520eabe8817013a742
       computeResources:
         requests:
           cpu: 100m
@@ -64,12 +64,9 @@ spec:
         write_results() {
           local status="$1" details="$2" signer="${3:-}" issuer="${4:-}" ts="${5:-}"
           mkdir -p "${WORKSPACE_PATH}/signature-results"
-          python3 -c "
-        import json
-        d = {'status': '$status', 'details': '''$details''', 'signer': '$signer', 'issuer': '$issuer', 'timestamp': '$ts'}
-        with open('${WORKSPACE_PATH}/signature-results/status.json', 'w') as f:
-            json.dump(d, f)
-        "
+          printf '{"status":"%s","details":"%s","signer":"%s","issuer":"%s","timestamp":"%s"}\n' \
+            "$status" "$details" "$signer" "$issuer" "$ts" \
+            > "${WORKSPACE_PATH}/signature-results/status.json"
           echo -n "$status" > $(results.SIGNATURE_STATUS.path)
           echo -n "$details" > $(results.SIGNATURE_DETAILS.path)
           echo "$details"
