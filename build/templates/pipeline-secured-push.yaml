@@ -10,6 +10,8 @@ spec:
   results:
     - name: ACS_IMAGE_SCAN_OUTPUT
       value: $(tasks.acs-image-scan.results.SCAN_OUTPUT)
+    - name: COMMIT_SIGNATURE_STATUS
+      value: $(tasks.verify-commit-signature.results.SIGNATURE_STATUS)
   workspaces:
     - name: source
     - name: basic-auth
@@ -39,9 +41,20 @@ spec:
           workspace: source
         - name: basic-auth
           workspace: basic-auth
-    - name: maven-build
+    - name: verify-commit-signature
       runAfter:
         - clone-source
+      taskRef:
+        name: verify-commit-signature
+      params:
+        - name: ENFORCE
+          value: "false"
+      workspaces:
+        - name: source
+          workspace: source
+    - name: maven-build
+      runAfter:
+        - verify-commit-signature
       taskRef:
         name: maven-build
       workspaces:

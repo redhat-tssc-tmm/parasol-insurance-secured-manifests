@@ -51,9 +51,20 @@ spec:
           workspace: source
         - name: basic-auth
           workspace: basic-auth
-    - name: maven-build
+    - name: verify-commit-signature
       runAfter:
         - clone-source
+      taskRef:
+        name: verify-commit-signature
+      params:
+        - name: ENFORCE
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+    - name: maven-build
+      runAfter:
+        - verify-commit-signature
       taskRef:
         name: maven-build
       workspaces:

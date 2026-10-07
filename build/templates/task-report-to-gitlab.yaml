@@ -108,7 +108,35 @@ spec:
         lines.append("## Merge Request Check Results")
         lines.append("")
 
-        # --- ACS Policy Check section (first — this is the gate) ---
+        # --- Commit Signature section (first) ---
+        sig_json_path = os.path.join(ws_path, "signature-results",
+                                     "status.json") if ws_path else ""
+        sig_data = None
+        if sig_json_path and os.path.isfile(sig_json_path):
+            try:
+                with open(sig_json_path) as f:
+                    sig_data = json.load(f)
+            except Exception:
+                pass
+
+        if sig_data:
+            sig_status = sig_data.get("status", "")
+            sig_details = sig_data.get("details", "")
+            if sig_status == "SIGNED":
+                lines.append("### ✅ Commit Signature")
+                lines.append("")
+                lines.append(sig_details)
+            elif sig_status == "BOT_COMMIT":
+                lines.append("### ℹ️ Commit Signature")
+                lines.append("")
+                lines.append(sig_details)
+            elif sig_status == "UNSIGNED":
+                lines.append("### ⛔ Commit Signature")
+                lines.append("")
+                lines.append("⛔ UNSIGNED COMMIT — as per company policy, unsigned code will not be promoted beyond developer sandboxes")
+            lines.append("")
+
+        # --- ACS Policy Check section ---
         check_icon = "✅" if check_status == "Succeeded" else "❌"
         lines.append("### {} ACS Policy Check".format(check_icon))
         lines.append("")
