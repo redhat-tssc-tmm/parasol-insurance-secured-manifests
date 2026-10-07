@@ -108,7 +108,7 @@ spec:
           exit 0
         fi
 
-        echo "WARNING! UNSIGNED COMMIT DETECTED!"
+        echo "⚠️  WARNING! UNSIGNED COMMIT DETECTED!"
         echo "Committer: ${COMMITTER_EMAIL}"
 
         write_results "UNSIGNED" "⚠️ WARNING! UNSIGNED COMMIT DETECTED!"
