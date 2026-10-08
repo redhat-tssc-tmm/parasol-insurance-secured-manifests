@@ -1,0 +1,199 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: generate-upload-sbom
+  namespace: {{ .Values.namespace }}
+  annotations:
+    task.output.location: results
+    task.results.format: application/text
+    task.results.type: external-link
+    task.results.key: LINK_TO_SBOM
+spec:
+  description: >-
+    Generate a CycloneDX 1.6 SBOM for a container image using syft,
+    then upload it to Trusted Profile Analyzer (TPA).
+  params:
+    - name: IMAGE
+      type: string
+      description: Full image reference to scan (e.g. registry/org/name:tag)
+    - name: SOURCE_NAME
+      type: string
+      description: Source name for the SBOM metadata
+    - name: SOURCE_VERSION
+      type: string
+      description: Source version (tag) for the SBOM metadata
+    - name: TPA_URL
+      type: string
+      description: TPA server URL (external, for clickable links)
+      default: "https://server-trusted-profile-analyzer.{{ .Values.cluster_subdomain }}"
+    - name: ISSUER_URL
+      type: string
+      description: OIDC issuer URL for token exchange
+      default: "https://sso.{{ .Values.cluster_subdomain }}/realms/sso"
+    - name: LABEL_DEV
+      type: string
+      description: Developer/tenant label
+    - name: LABEL_TAG
+      type: string
+      description: Tag label for the SBOM
+  results:
+    - name: LINK_TO_SBOM
+      description: Deep link to the uploaded SBOM in Trusted Profile Analyzer
+  workspaces:
+    - name: source
+    - name: dockerconfig
+      description: Docker config for registry authentication
+      optional: true
+  volumes:
+    - name: sbom-output
+      emptyDir: {}
+  steps:
+    - name: generate-sbom
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      computeResources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+      volumeMounts:
+        - name: sbom-output
+          mountPath: /tmp/sbom
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        DOCKER_CONFIG_DIR="/tmp/docker-config"
+        mkdir -p "${DOCKER_CONFIG_DIR}"
+        if [ -f "$(workspaces.dockerconfig.path)/.dockerconfigjson" ]; then
+          cp "$(workspaces.dockerconfig.path)/.dockerconfigjson" "${DOCKER_CONFIG_DIR}/config.json"
+        elif [ -f "$(workspaces.dockerconfig.path)/config.json" ]; then
+          cp "$(workspaces.dockerconfig.path)/config.json" "${DOCKER_CONFIG_DIR}/config.json"
+        fi
+        export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
+
+        echo "Installing prerequisites..."
+        microdnf install -y tar gzip --nodocs && microdnf clean all
+
+        echo "Installing syft..."
+        curl -sSfL https://get.anchore.io/syft | sh -s -- -b /tmp/bin
+        export PATH="/tmp/bin:${PATH}"
+
+        echo "Generating SBOM for $(params.IMAGE)..."
+        echo "  Source name: $(params.SOURCE_NAME)"
+        echo "  Source version: $(params.SOURCE_VERSION)"
+
+        unset SSL_CERT_DIR
+
+        syft "registry:$(params.IMAGE)" \
+          --source-name "$(params.SOURCE_NAME)" \
+          --source-version "$(params.SOURCE_VERSION)" \
+          --scope deep-squashed \
+          --enrich java \
+          --select-catalogers "+java-archive-cataloger" \
+          -o "cyclonedx-json@1.6=/tmp/sbom/sbom-cyclonedx.json"
+
+        echo "SBOM generated."
+    - name: verify-sbom
+      image: registry.access.redhat.com/ubi9:latest
+      computeResources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      volumeMounts:
+        - name: sbom-output
+          mountPath: /tmp/sbom
+      script: |
+        #!/usr/bin/env bash
+        SBOM_FILE="/tmp/sbom/sbom-cyclonedx.json"
+        if [ ! -f "${SBOM_FILE}" ]; then
+          echo "ERROR: SBOM file not found" >&2
+          exit 1
+        fi
+
+        python3 -c "
+        import json
+        with open('${SBOM_FILE}') as f:
+            sbom = json.load(f)
+        meta = sbom.get('metadata', {})
+        component = meta.get('component', {})
+        components = sbom.get('components', [])
+        licenses_count = sum(1 for c in components if c.get('licenses'))
+        print('SBOM Summary:')
+        print(f'  CycloneDX version: {sbom.get(\"specVersion\", \"unknown\")}')
+        print(f'  Source: {component.get(\"name\", \"N/A\")} v{component.get(\"version\", \"N/A\")}')
+        print(f'  Components: {len(components)}')
+        print(f'  With license info: {licenses_count}')
+        "
+    - name: upload-sbom
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      computeResources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      volumeMounts:
+        - name: sbom-output
+          mountPath: /tmp/sbom
+      env:
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: tpa-cli-secret
+              key: client-secret
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        SBOM_FILE="/tmp/sbom/sbom-cyclonedx.json"
+        CLIENT_ID="tpa-cli"
+
+        echo "Obtaining OIDC access token..."
+        TOKEN=$(curl -sk -X POST "$(params.ISSUER_URL)/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "grant_type=client_credentials" \
+          -d "client_id=${CLIENT_ID}" \
+          -d "client_secret=${CLIENT_SECRET}" \
+          | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
+        if [ -z "${TOKEN}" ]; then
+          echo "ERROR: Failed to obtain access token" >&2
+          exit 1
+        fi
+        echo "Access token obtained."
+
+        LABELS="labels.dev=$(params.LABEL_DEV)"
+        LABELS="${LABELS}&labels.tag=$(params.LABEL_TAG)"
+
+        echo "Uploading SBOM to TPA..."
+        echo "  URL: $(params.TPA_URL)/api/v3/sbom"
+        echo "  Labels: ${LABELS}"
+
+        HTTP_CODE=$(curl -sk -X POST \
+          "$(params.TPA_URL)/api/v3/sbom?${LABELS}" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data-binary "@${SBOM_FILE}" \
+          -o /tmp/tpa-response.json \
+          -w "%{http_code}")
+
+        echo "TPA response: HTTP ${HTTP_CODE}"
+        cat /tmp/tpa-response.json
+        echo ""
+
+        if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
+          SBOM_ID=$(grep -o '"id":"[^"]*"' /tmp/tpa-response.json | head -1 | cut -d'"' -f4)
+          SBOM_LINK="$(params.TPA_URL)/sboms/${SBOM_ID}"
+          echo "SBOM uploaded successfully."
+          echo "SBOM link: ${SBOM_LINK}"
+          echo -n "${SBOM_LINK}" > $(results.LINK_TO_SBOM.path)
+        else
+          echo "ERROR: SBOM upload failed with HTTP ${HTTP_CODE}" >&2
+          exit 1
+        fi

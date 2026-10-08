@@ -52,9 +52,30 @@ spec:
       workspaces:
         - name: dockerconfig
           workspace: dockerconfig
-    - name: open-prod-pr
+    - name: generate-upload-sbom
       runAfter:
         - skopeo-copy
+      taskRef:
+        name: generate-upload-sbom
+      params:
+        - name: IMAGE
+          value: "{{ .Values.registry.host }}/{{ .Values.registry.organization }}/{{ .Values.image.name }}:$(params.git-tag)"
+        - name: SOURCE_NAME
+          value: "{{ .Values.tenant.username }}-parasol-insurance"
+        - name: SOURCE_VERSION
+          value: $(params.git-tag)
+        - name: LABEL_DEV
+          value: "{{ .Values.tenant.username }}"
+        - name: LABEL_TAG
+          value: $(params.git-tag)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: open-prod-pr
+      runAfter:
+        - generate-upload-sbom
       taskRef:
         name: update-prod-manifest
       params:

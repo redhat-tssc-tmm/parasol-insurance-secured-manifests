@@ -110,6 +110,10 @@ spec:
           value: Containerfile
         - name: TLSVERIFY
           value: "false"
+        - name: BUILD_EXTRA_ARGS
+          value: >-
+            --label org.opencontainers.image.source=https://{{ .Values.gitlab.host }}/{{ .Values.tenant.username }}/parasol-insurance-secured.git
+            --label org.opencontainers.image.revision=$(params.git-revision)
         - name: STORAGE_DRIVER
           value: vfs
       workspaces:
