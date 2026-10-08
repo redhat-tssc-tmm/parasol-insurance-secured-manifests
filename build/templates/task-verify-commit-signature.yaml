@@ -93,11 +93,12 @@ spec:
         # Determine which commit to verify.
         # Merge commits (2 parents) are created by GitLab and are unsigned.
         # In that case, verify the merged branch tip (second parent).
+        # Use git cat-file (works in shallow clones, unlike git rev-list --parents).
         VERIFY_COMMIT="HEAD"
-        NUM_PARENTS=$(git rev-list --parents -1 HEAD | wc -w)
-        NUM_PARENTS=$((NUM_PARENTS - 1))
+        PARENTS=$(git cat-file -p HEAD | grep "^parent" | awk '{print $2}')
+        NUM_PARENTS=$(echo "$PARENTS" | wc -l)
         if [ "${NUM_PARENTS}" -ge 2 ]; then
-          MERGED_PARENT=$(git rev-list --parents -1 HEAD | awk '{print $3}')
+          MERGED_PARENT=$(echo "$PARENTS" | sed -n 2p)
           echo "Merge commit detected (${NUM_PARENTS} parents)"
           echo "Verifying merged branch commit: ${MERGED_PARENT:0:12}"
           VERIFY_COMMIT="${MERGED_PARENT}"

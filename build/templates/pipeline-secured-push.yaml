@@ -44,6 +44,8 @@ spec:
           value: $(params.git-revision)
         - name: SSL_VERIFY
           value: "false"
+        - name: DEPTH
+          value: "2"
       workspaces:
         - name: output
           workspace: source
