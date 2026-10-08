@@ -129,7 +129,7 @@ spec:
 
         # --- Build MR note ---
         lines = []
-        lines.append("## Merge Request Check Results")
+        lines.append("## 🔀 Merge Request Check Results")
         lines.append("")
 
         # --- Commit Signature section (first) ---
