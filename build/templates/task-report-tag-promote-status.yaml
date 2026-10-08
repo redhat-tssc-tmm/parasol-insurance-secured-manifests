@@ -1,0 +1,85 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: report-tag-promote-status
+  namespace: {{ .Values.namespace }}
+spec:
+  params:
+    - name: gitlab_host
+      type: string
+      default: "{{ .Values.gitlab.host }}"
+    - name: project_id
+      type: string
+    - name: commit_sha
+      type: string
+    - name: git_tag
+      type: string
+    - name: ec_status
+      type: string
+    - name: pipeline_status
+      type: string
+  volumes:
+    - name: gitlab-token
+      secret:
+        secretName: gitlab-credentials
+  steps:
+    - name: report
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      computeResources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      volumeMounts:
+        - name: gitlab-token
+          mountPath: /secrets/gitlab-token
+      env:
+        - name: EC_STATUS
+          value: $(params.ec_status)
+        - name: PIPELINE_STATUS
+          value: $(params.pipeline_status)
+        - name: GIT_TAG
+          value: $(params.git_tag)
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+
+        GITLAB_TOKEN=$(cat /secrets/gitlab-token/token)
+        API_URL="https://$(params.gitlab_host)/api/v4/projects/$(params.project_id)/statuses/$(params.commit_sha)"
+
+        map_state() {
+          case "$1" in
+            Succeeded) echo "success" ;;
+            *) echo "failed" ;;
+          esac
+        }
+
+        set_status() {
+          curl -sk \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data-urlencode "state=$1" \
+            --data-urlencode "name=$2" \
+            --data-urlencode "description=$3" \
+            "${API_URL}" > /dev/null
+          echo "$2: $1 — $3"
+        }
+
+        EC_STATE=$(map_state "${EC_STATUS}")
+        PIPELINE_STATE=$(map_state "${PIPELINE_STATUS}")
+
+        if [ "${EC_STATE}" = "success" ]; then
+          EC_DESC="Conforma policy validation passed for tag ${GIT_TAG}"
+        else
+          EC_DESC="Conforma policy validation FAILED for tag ${GIT_TAG}"
+        fi
+
+        if [ "${PIPELINE_STATE}" = "success" ]; then
+          PROMOTE_DESC="Image promoted to production for tag ${GIT_TAG}"
+        else
+          PROMOTE_DESC="Promotion to production failed for tag ${GIT_TAG}"
+        fi
+
+        set_status "${EC_STATE}" "ec-validation" "${EC_DESC}"
+        set_status "${PIPELINE_STATE}" "tag-promote" "${PROMOTE_DESC}"

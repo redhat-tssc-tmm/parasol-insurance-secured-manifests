@@ -68,11 +68,15 @@ spec:
   finally:
     - name: report-tag-status
       taskRef:
-        name: update-gitlab-status
+        name: report-tag-promote-status
       params:
         - name: project_id
           value: $(params.project-id)
         - name: commit_sha
           value: $(params.git-revision)
-        - name: statuses
-          value: '[{"name":"ec-validation","state":"$(tasks.ec-validate.status)","description":"Conforma policy validation for tag $(params.git-tag)"},{"name":"tag-promote","state":"$(tasks.status)","description":"Promotion to production for tag $(params.git-tag)"}]'
+        - name: git_tag
+          value: $(params.git-tag)
+        - name: ec_status
+          value: $(tasks.ec-validate.status)
+        - name: pipeline_status
+          value: $(tasks.status)
