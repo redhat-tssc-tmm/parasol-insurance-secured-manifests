@@ -15,7 +15,7 @@ spec:
     - name: SONAR_QUALITY_RESULT
       value: $(tasks.sonar-scan.results.SONAR_QUALITY_RESULT)
     - name: ACS_IMAGE_CHECK_STATUS
-      value: $(tasks.acs-image-check.status)
+      value: $(tasks.acs-image-check.results.CHECK_STATUS)
   workspaces:
     - name: source
     - name: basic-auth
