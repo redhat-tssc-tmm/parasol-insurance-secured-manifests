@@ -90,11 +90,24 @@ spec:
           exit 0
         fi
 
+        # Determine which commit to verify.
+        # Merge commits (2 parents) are created by GitLab and are unsigned.
+        # In that case, verify the merged branch tip (second parent).
+        VERIFY_COMMIT="HEAD"
+        NUM_PARENTS=$(git rev-list --parents -1 HEAD | wc -w)
+        NUM_PARENTS=$((NUM_PARENTS - 1))
+        if [ "${NUM_PARENTS}" -ge 2 ]; then
+          MERGED_PARENT=$(git rev-list --parents -1 HEAD | awk '{print $3}')
+          echo "Merge commit detected (${NUM_PARENTS} parents)"
+          echo "Verifying merged branch commit: ${MERGED_PARENT:0:12}"
+          VERIFY_COMMIT="${MERGED_PARENT}"
+        fi
+
         echo "Verifying commit signature with gitsign..."
         VERIFY_OUTPUT=$(gitsign verify \
           --certificate-identity-regexp=".*@${ALLOWED_DOMAIN}" \
           --certificate-oidc-issuer-regexp=".*" \
-          HEAD 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
+          "${VERIFY_COMMIT}" 2>&1) && VERIFY_EXIT=0 || VERIFY_EXIT=$?
 
         echo "gitsign verify exit code: ${VERIFY_EXIT}"
         echo "${VERIFY_OUTPUT}"
@@ -102,8 +115,13 @@ spec:
         if [ "${VERIFY_EXIT}" -eq 0 ]; then
           SIGNER_EMAIL=$(echo "$VERIFY_OUTPUT" | grep -oP '\[\K[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?=\])' | head -1 || true)
           SIGNER_ISSUER=$(echo "$VERIFY_OUTPUT" | grep -oP 'Good signature from \[.*\]\(\K[^)]+' | head -1 || true)
+          if [ "${NUM_PARENTS}" -ge 2 ]; then
+            DETAIL="✅ Good signature — ${SIGNER_EMAIL:-verified signer} (merged commit ${MERGED_PARENT:0:12})"
+          else
+            DETAIL="✅ Good signature — ${SIGNER_EMAIL:-verified signer} (signed at ${COMMIT_DATE})"
+          fi
           write_results "SIGNED" \
-            "✅ Good signature — ${SIGNER_EMAIL:-verified signer} (signed at ${COMMIT_DATE})" \
+            "${DETAIL}" \
             "${SIGNER_EMAIL:-unknown}" "${SIGNER_ISSUER:-unknown}" "$COMMIT_DATE"
           exit 0
         fi
