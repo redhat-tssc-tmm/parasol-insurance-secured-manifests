@@ -8,6 +8,10 @@ spec:
     - name: git-revision
       type: string
   results:
+    - name: IMAGE_URL
+      value: $(tasks.build-and-push.results.IMAGE_URL)
+    - name: IMAGE_DIGEST
+      value: $(tasks.build-and-push.results.IMAGE_DIGEST)
     - name: ACS_IMAGE_SCAN_OUTPUT
       value: $(tasks.acs-image-scan.results.SCAN_OUTPUT)
     - name: COMMIT_SIGNATURE_STATUS
