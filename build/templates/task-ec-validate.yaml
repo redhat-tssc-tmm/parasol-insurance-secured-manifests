@@ -100,8 +100,8 @@ spec:
           cp /tmp/ec-output/result.txt "$(workspaces.source.path)/ec-results/" 2>/dev/null || true
         fi
 
-        echo "EC validation completed"
-        exit ${EC_EXIT}
+        echo -n "${EC_EXIT}" > /tmp/ec-output/exit-code
+        echo "EC validation completed (exit code: ${EC_EXIT})"
     - name: summary
       image: registry.access.redhat.com/ubi9-minimal:latest
       computeResources:
@@ -150,3 +150,5 @@ spec:
         print(json.dumps(result))
         " > $(results.CONFORMA_OUTPUT.path)
         cat /tmp/ec-output/result.json
+        EC_EXIT=$(cat /tmp/ec-output/exit-code 2>/dev/null || echo "0")
+        exit ${EC_EXIT}
