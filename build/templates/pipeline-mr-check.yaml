@@ -154,3 +154,5 @@ spec:
           value: $(tasks.acs-image-check.status)
         - name: scan_output
           value: "{}"
+        - name: target_url
+          value: "https://backstage-developer-hub-rhdh.{{ .Values.cluster_subdomain }}/catalog/default/component/parasol-insurance-secured-{{ .Values.tenant.username }}/ci"

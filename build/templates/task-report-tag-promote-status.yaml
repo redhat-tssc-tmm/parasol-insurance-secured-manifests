@@ -56,12 +56,15 @@ spec:
           esac
         }
 
+        RHDH_URL="https://backstage-developer-hub-rhdh.{{ .Values.cluster_subdomain }}/catalog/default/component/parasol-insurance-secured-{{ .Values.tenant.username }}/ci"
+
         set_status() {
           curl -sk \
             --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
             --data-urlencode "state=$1" \
             --data-urlencode "name=$2" \
             --data-urlencode "description=$3" \
+            --data-urlencode "target_url=${RHDH_URL}" \
             "${API_URL}" > /dev/null
           echo "$2: $1 — $3"
         }
