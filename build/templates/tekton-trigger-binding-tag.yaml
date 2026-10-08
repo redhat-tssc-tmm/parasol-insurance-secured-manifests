@@ -9,3 +9,5 @@ spec:
       value: $(extensions.tag_name)
     - name: git-revision
       value: $(body.checkout_sha)
+    - name: project-id
+      value: $(body.project_id)

@@ -7,6 +7,7 @@ spec:
   params:
     - name: git-tag
     - name: git-revision
+    - name: project-id
   resourcetemplates:
     - apiVersion: tekton.dev/v1
       kind: PipelineRun
@@ -23,6 +24,8 @@ spec:
             value: $(tt.params.git-tag)
           - name: git-revision
             value: $(tt.params.git-revision)
+          - name: project-id
+            value: $(tt.params.project-id)
         workspaces:
           - name: source
             volumeClaimTemplate:

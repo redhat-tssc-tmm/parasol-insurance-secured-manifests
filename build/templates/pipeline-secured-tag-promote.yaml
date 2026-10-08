@@ -9,6 +9,9 @@ spec:
       type: string
     - name: git-revision
       type: string
+    - name: project-id
+      type: string
+      default: ""
   workspaces:
     - name: source
     - name: basic-auth
@@ -62,3 +65,14 @@ spec:
       workspaces:
         - name: source
           workspace: source
+  finally:
+    - name: report-tag-status
+      taskRef:
+        name: update-gitlab-status
+      params:
+        - name: project_id
+          value: $(params.project-id)
+        - name: commit_sha
+          value: $(params.git-revision)
+        - name: statuses
+          value: '[{"name":"ec-validation","state":"$(tasks.ec-validate.status)","description":"Conforma policy validation for tag $(params.git-tag)"},{"name":"tag-promote","state":"$(tasks.status)","description":"Promotion to production for tag $(params.git-tag)"}]'
