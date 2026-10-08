@@ -91,7 +91,8 @@ spec:
           --output json=/tmp/ec-output/result.json \
           --output text=/tmp/ec-output/result.txt \
           --show-successes \
-          --info
+          --info || EC_EXIT=$?
+        EC_EXIT=${EC_EXIT:-0}
 
         if [ -d "$(workspaces.source.path)" ]; then
           mkdir -p "$(workspaces.source.path)/ec-results"
@@ -100,6 +101,7 @@ spec:
         fi
 
         echo "EC validation completed"
+        exit ${EC_EXIT}
     - name: summary
       image: registry.access.redhat.com/ubi9-minimal:latest
       computeResources:
