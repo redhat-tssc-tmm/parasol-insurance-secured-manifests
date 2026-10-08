@@ -18,6 +18,9 @@ spec:
       type: string
     - name: pipeline_status
       type: string
+  workspaces:
+    - name: source
+      optional: true
   volumes:
     - name: gitlab-token
       secret:
@@ -72,17 +75,35 @@ spec:
         EC_STATE=$(map_state "${EC_STATUS}")
         PIPELINE_STATE=$(map_state "${PIPELINE_STATUS}")
 
+        # Read MR URL from workspace if available
+        MR_URL=""
+        if [ -f "$(workspaces.source.path)/promote-results/mr-url" ] 2>/dev/null; then
+          MR_URL=$(cat "$(workspaces.source.path)/promote-results/mr-url")
+        fi
+
         if [ "${EC_STATE}" = "success" ]; then
           EC_DESC="Conforma policy validation passed for tag ${GIT_TAG}"
         else
           EC_DESC="Conforma policy validation FAILED for tag ${GIT_TAG}"
         fi
 
-        if [ "${PIPELINE_STATE}" = "success" ]; then
-          PROMOTE_DESC="Image promoted to production for tag ${GIT_TAG}"
-        else
-          PROMOTE_DESC="Promotion to production failed for tag ${GIT_TAG}"
-        fi
-
         set_status "${EC_STATE}" "ec-validation" "${EC_DESC}"
-        set_status "${PIPELINE_STATE}" "tag-promote" "${PROMOTE_DESC}"
+
+        if [ "${PIPELINE_STATE}" = "success" ] && [ -n "${MR_URL}" ]; then
+          PROMOTE_DESC="Image promoted to production for tag ${GIT_TAG}"
+          curl -sk \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data-urlencode "state=success" \
+            --data-urlencode "name=tag-promote" \
+            --data-urlencode "description=${PROMOTE_DESC}" \
+            --data-urlencode "target_url=${MR_URL}" \
+            "${API_URL}" > /dev/null
+          echo "tag-promote: success — ${PROMOTE_DESC} (MR: ${MR_URL})"
+        else
+          if [ "${PIPELINE_STATE}" = "success" ]; then
+            PROMOTE_DESC="Image promoted to production for tag ${GIT_TAG}"
+          else
+            PROMOTE_DESC="Promotion to production failed for tag ${GIT_TAG}"
+          fi
+          set_status "${PIPELINE_STATE}" "tag-promote" "${PROMOTE_DESC}"
+        fi

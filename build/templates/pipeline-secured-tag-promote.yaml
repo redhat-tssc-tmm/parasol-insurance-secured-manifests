@@ -69,6 +69,9 @@ spec:
     - name: report-tag-status
       taskRef:
         name: report-tag-promote-status
+      workspaces:
+        - name: source
+          workspace: source
       params:
         - name: project_id
           value: $(params.project-id)

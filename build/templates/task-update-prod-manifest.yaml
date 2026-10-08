@@ -107,10 +107,15 @@ spec:
         fi
 
         export EC_JSON
-        curl -k --fail \
+        MR_RESPONSE=$(curl -k --fail \
           --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
           --data-urlencode "source_branch=${BRANCH}" \
           --data-urlencode "target_branch=main" \
           --data-urlencode "title=Promote ${IMAGE_TAG} to production (Conforma-verified)" \
           --data-urlencode "description=${MR_BODY}" \
-          "https://${GITLAB_HOST}/api/v4/projects/{{ .Values.tenant.username }}%2Fparasol-insurance-secured-manifests/merge_requests"
+          "https://${GITLAB_HOST}/api/v4/projects/{{ .Values.tenant.username }}%2Fparasol-insurance-secured-manifests/merge_requests")
+
+        MR_WEB_URL=$(echo "$MR_RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('web_url',''))" 2>/dev/null || true)
+        echo "Merge Request: ${MR_WEB_URL}"
+        mkdir -p "$(workspaces.source.path)/promote-results"
+        echo -n "${MR_WEB_URL}" > "$(workspaces.source.path)/promote-results/mr-url"
