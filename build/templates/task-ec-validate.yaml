@@ -21,12 +21,12 @@ spec:
     - name: policy_path
       type: string
       default: "policies/parasol-software-supply-chain"
-    - name: certificate_oidc_issuer
+    - name: certificate_oidc_issuer_regexp
       type: string
-      default: "https://kubernetes.default.svc"
-    - name: certificate_identity
+      default: ".*"
+    - name: certificate_identity_regexp
       type: string
-      default: "https://kubernetes.io/namespaces/openshift-pipelines/serviceaccounts/tekton-chains-controller"
+      default: ".*"
     - name: rekor_url
       type: string
       default: "http://rekor-server.trusted-artifact-signer.svc"
@@ -51,10 +51,10 @@ spec:
           value: $(params.gitlab_host)
         - name: POLICY_PATH
           value: $(params.policy_path)
-        - name: CERTIFICATE_OIDC_ISSUER
-          value: $(params.certificate_oidc_issuer)
-        - name: CERTIFICATE_IDENTITY
-          value: $(params.certificate_identity)
+        - name: CERTIFICATE_OIDC_ISSUER_REGEXP
+          value: $(params.certificate_oidc_issuer_regexp)
+        - name: CERTIFICATE_IDENTITY_REGEXP
+          value: $(params.certificate_identity_regexp)
         - name: REKOR_URL
           value: $(params.rekor_url)
       volumeMounts:
@@ -85,8 +85,8 @@ spec:
         ec validate image \
           --image "${IMAGE_REF}" \
           --policy "${POLICY_URL}" \
-          --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
-          --certificate-identity "${CERTIFICATE_IDENTITY}" \
+          --certificate-oidc-issuer-regexp "${CERTIFICATE_OIDC_ISSUER_REGEXP}" \
+          --certificate-identity-regexp "${CERTIFICATE_IDENTITY_REGEXP}" \
           --rekor-url "${REKOR_URL}" \
           --output json=/tmp/ec-output/result.json \
           --output text=/tmp/ec-output/result.txt \
